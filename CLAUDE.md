@@ -5,6 +5,13 @@ This is a from-scratch finite-difference micromagnetic solver, modelled on the m
 - **Physics spec:** Fischbacher et al. 2018, J. Phys. D 51 193002, https://doi.org/10.1088/1361-6463/aab7d1 (open access). A local copy, kept out of git, is at `refs/Fischbacher_2018_J._Phys._D__Appl._Phys._51_193002.pdf`.
 - **Roadmap, status and decision log:** `NOTES.md`. Read it at the start of each session.
 
+## Working with the user
+- This is a teaching project, and the user is the learner, so explain the *why* in plain language.
+- **Before each design decision:** say what the decision is, give the realistic options, and recommend one. Let the user choose before you implement.
+- **After each iteration:** give a short walkthrough of what was built and how the pieces connect.
+- **While the user is running commands** (e.g. on the cluster): keep replies short, with just the fix and the next command.
+- **Cluster environment problems:** don't block the local work on them. Log them as open issues in NOTES.md and keep going.
+
 ## Stack
 - C++ core, built with CMake. CUDA and cuFFT for the GPU path.
 - Python bindings and pytest as the single test runner.
