@@ -6,7 +6,7 @@ Each iteration is done when its check passes and its decisions are logged below.
 | # | Iteration | Check | Status |
 |---|-----------|-------|--------|
 | 0 | Toolchain: CMake + bindings + pytest + one CUDA kernel, run on a laptop and on a cluster GPU node through Slurm | Kernel test passes in both places | laptop ✅ · cluster blocked (see below) |
-| 1 | Grid, per-cell materials, exchange / anisotropy / Zeeman (eqs. 8, 9, 11), CPU | Energies of uniform states; 1D Bloch wall width = π√(A/K) | **next:** design in progress. Pending decision 1: memory layout, interleaved `(nz,ny,nx,3)` vs separate component arrays `(3,nz,ny,nx)`; recommended separate arrays (GPU-friendly reads, FFT-friendly). Explain the physics in plain terms first. |
+| 1 | Grid, per-cell materials, exchange / anisotropy / Zeeman (eqs. 8, 9, 11), CPU | Energies of uniform states; H matches the finite-difference gradient of E; analytic 1D Bloch wall (width π√(A/K)) is in equilibrium (torque → 0) with σ → 4√(AK), both errors falling ~4× per halving of dx (D13) | **in progress:** design settled (D9–D13), implementing test-first |
 | 2 | Demag: Newell tensor, direct O(N²) oracle, zero-padded FFT (eqs. 17–21) | Cube: trace N = 1, Nxx = 1/3; thin film: Nzz → 1; FFT and direct agree to ~1e-12 | todo |
 | 3 | LLG (eq. 25) with a self-written adaptive Dormand–Prince RK45 | Macrospin matches the analytic solution; µMAG SP4 within a few % | todo |
 | 4 | Minimizer: projected steepest descent with Barzilai–Borwein steps (eqs. 22–23), plus a hysteresis driver | Stoner–Wohlfarth astroid; µMAG SP2 or SP3 | todo |
@@ -120,3 +120,63 @@ Each iteration is done when its check passes and its decisions are logged below.
 - **Context:** With nothing pinned, uv chose 3.14 on the laptop and 3.15 on the cluster. 3.15 is new, and dependency wheels for it may be missing.
 - **Decision:** `uv python pin 3.13`. The laptop and the cluster now use the same interpreter.
 - **Consequence:** Bump the version deliberately once numpy and the other dependencies ship wheels for newer Python.
+
+### D9: Data model: SoA doubles in numpy-owned arrays, C++ `Grid` (2026-10-17)
+- **Context:** iteration 1 needs a layout for m and the per-cell materials that will also suit the GPU (iteration 5) and cuFFT (iteration 2).
+- **Decision:**
+  - Vectors (m, k̂) are `(3, nz, ny, nx)` (separate component arrays, x fastest); scalars (Ms, A, K) are `(nz, ny, nx)`. Everything is float64.
+  - numpy owns all arrays. C++ functions take non-owning nanobind views and write into a caller-supplied `out`.
+  - `Grid{nx, ny, nz, dx, dy, dz}` is one C++ struct bound to Python and passed to every call.
+  - The binding checks dtype, contiguity (via nanobind's typed `ndarray`) and shape against `grid`. It does not enforce |m| = 1 or |k̂| = 1: the fields are defined for any m, the gradient test perturbs m off the sphere, and normalising is the integrator's job.
+- **Alternatives:**
+  - Interleaved `(nz, ny, nx, 3)`: slightly simpler CPU loops, but strided GPU reads and a reshuffle before every FFT.
+  - float32 or a precision template: V100 runs FP64 at half rate, and we want CPU/GPU agreement near 1e-12. No second precision exists yet.
+  - A C++ `State` that owns `std::vector`s: needed once data stays resident on the GPU, speculative on the CPU.
+  - A Python dataclass grid with loose scalars passed to C++: the grid would be defined twice and shapes would go unchecked.
+- **Consequence:** each field function is a pure "views in → out" kernel that is easy to test. Ownership gets revisited in iteration 5.
+
+### D10: Field-first API; energy derived from the field (2026-10-17)
+- **Context:** LLG and the minimizer need H_eff, not energy. Energy is still needed for the physics checks.
+- **Decision:**
+  - Each term computes H (A/m) and **overwrites** `out`: `exchange_field(grid, m, Ms, A, out)`, `anisotropy_field(grid, m, Ms, K, k, out)`, `zeeman_field(grid, Ms, H_ext, out)`.
+  - Energy is `E = −c·µ₀·dV·Σ Ms (m·H)`, with c = ½ for the quadratic terms (exchange, anisotropy) and c = 1 for Zeeman. It is a numpy one-liner for now.
+  - H_ext is one uniform `(3,)` vector.
+- **Alternatives:**
+  - Separate energy and field implementations: twice the code, and a mismatch is a silent bug.
+  - Accumulating into `out` (as MuMax3 does): saves temporaries in the integrator, but a forgotten zeroing gives a silently wrong field. Switch if iteration 3 profiling says so.
+  - Energy in C++: a reduction kernel to port and tolerance-justify (D7) before anything needs it.
+  - Per-cell H_ext: nothing on the roadmap uses one.
+- **Consequence:** one code path per term, checked two independent ways: closed-form uniform energies, and H against a finite-difference gradient of E. The gradient test also proves the exchange operator is symmetric.
+
+### D11: Exchange discretisation: vacuum cells, Neumann boundaries, harmonic-mean A (2026-10-17)
+- **Context:** the paper's microstructures vary A sharply across grain boundaries, and real geometries are shapes cut out of a box.
+- **Decision:**
+  - Second-order 6-neighbour Laplacian.
+  - `Ms = 0` means vacuum: H = 0 there, and vacuum cells are not exchange neighbours.
+  - Free (Neumann) boundaries: a missing or vacuum neighbour contributes nothing.
+  - The coupling across a face uses `A_face = 2·A₁A₂/(A₁+A₂)` (0 if either is 0).
+- **Alternatives:**
+  - Arithmetic mean of A: lets a strong grain couple straight through a non-magnetic boundary phase.
+  - Periodic boundaries: no test needs them. The 1D wall uses a grid 1 cell wide in y and z, which is exact without demag.
+  - No vacuum support: it would have to be retrofitted later, along with "fills the box" assumptions in the tests.
+- **Consequence:** matches MuMax3's scheme. Interfaces are handled by flux continuity, and arbitrary shapes cost one `if`.
+
+### D12: Uniaxial anisotropy with the paper's sign; µ₀ = 4π×10⁻⁷ (2026-10-17)
+- **Context:** anisotropy energy can be written as `−K(m·k̂)²` or `K(1 − (m·k̂)²)`. µ₀ has been a measured constant since the 2019 SI redefinition.
+- **Decision:** eq. 9 as written (uniform m ∥ k̂ has energy −K·V). Uniaxial only. `mu0 = 4π·1e-7`, defined once in C++ and exported.
+- **Alternatives:** the `K(1 − …)` form (same fields, different constant); cubic anisotropy (not on the roadmap); CODATA µ₀ (differs by ~5e-10 relative and breaks exact comparison with MuMax3 and the µMAG references).
+- **Consequence:** energies are directly comparable with the paper.
+
+### D13: Iteration-1 check: analytic Bloch wall in equilibrium, verified by convergence order (2026-10-17)
+- **Context:** the roadmap check was "Bloch wall width = π√(A/K)", but there is no minimizer until iteration 4 to relax a wall.
+- **Decision:**
+  - Place the exact profile `θ(x) = 2·atan(exp(x/δ₀))`, `δ₀ = √(A/K)` (width π·δ₀) on the grid.
+  - Assert that the torque `m × H_eff` → 0 and that the wall energy → `σ = 4√(AK)` per unit area.
+  - A factor-of-2 error in either field shifts the true width by √2, so the torque would no longer vanish: the torque check tests the width.
+  - Pass/fail is the convergence ratio: both errors must fall ~4× (accepted range 3.5–4.5) as dx goes δ₀/4 → δ₀/8 → δ₀/16, with a loose absolute bound as a backstop.
+  - Use NdFeB-like values (A = 7.7e-12 J/m, K = 4.3e6 J/m³, Ms = 1.28e6 A/m) on a domain 40·δ₀ long.
+- **Alternatives:**
+  - A small relaxer inside the test: a throwaway copy of iteration 4.
+  - Deferring the width check to iteration 4: iteration 1 would then have no physics check.
+  - A fixed tolerance alone: a small constant-error bug could hide under it, but it cannot fake second-order convergence.
+- **Consequence:** the check verifies the discretisation order, not just a number. The roadmap check text was reworded to match.
