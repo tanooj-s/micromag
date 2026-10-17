@@ -6,7 +6,7 @@ Each iteration is done when its check passes and its decisions are logged below.
 | # | Iteration | Check | Status |
 |---|-----------|-------|--------|
 | 0 | Toolchain: CMake + bindings + pytest + one CUDA kernel, run on a laptop and on a cluster GPU node through Slurm | Kernel test passes in both places | laptop ✅ · cluster blocked (see below) |
-| 1 | Grid, per-cell materials, exchange / anisotropy / Zeeman (eqs. 8, 9, 11), CPU | Energies of uniform states; 1D Bloch wall width = π√(A/K) | todo |
+| 1 | Grid, per-cell materials, exchange / anisotropy / Zeeman (eqs. 8, 9, 11), CPU | Energies of uniform states; 1D Bloch wall width = π√(A/K) | **next:** design in progress. Pending decision 1: memory layout, interleaved `(nz,ny,nx,3)` vs separate component arrays `(3,nz,ny,nx)`; recommended separate arrays (GPU-friendly reads, FFT-friendly). Explain the physics in plain terms first. |
 | 2 | Demag: Newell tensor, direct O(N²) oracle, zero-padded FFT (eqs. 17–21) | Cube: trace N = 1, Nxx = 1/3; thin film: Nzz → 1; FFT and direct agree to ~1e-12 | todo |
 | 3 | LLG (eq. 25) with a self-written adaptive Dormand–Prince RK45 | Macrospin matches the analytic solution; µMAG SP4 within a few % | todo |
 | 4 | Minimizer: projected steepest descent with Barzilai–Borwein steps (eqs. 22–23), plus a hysteresis driver | Stoner–Wohlfarth astroid; µMAG SP2 or SP3 | todo |
