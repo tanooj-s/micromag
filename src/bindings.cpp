@@ -1,12 +1,19 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
+#include <nanobind/stl/array.h>
 
+#include <array>
 #include <stdexcept>
+#include <string>
+
+#include "fields.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;
 
 using Vec = nb::ndarray<double, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
+using In = nb::ndarray<const double, nb::c_contig, nb::device::cpu>;
+using Out = nb::ndarray<double, nb::c_contig, nb::device::cpu>;
 
 #ifdef MICROMAG_CUDA
 void scale_cuda(double* x, size_t n, double a);  // scale.cu
@@ -27,11 +34,44 @@ static void scale(Vec x, double a, bool cuda) {
 #endif
 }
 
+// Throws ValueError unless a is (3, nz, ny, nx) for a vector field or (nz, ny, nx) for a scalar one.
+template <class T>
+static void check_shape(const T& a, const Grid& g, bool vector, const char* name) {
+    size_t want[4] = {3, g.nz, g.ny, g.nx};
+    size_t* w = vector ? want : want + 1;
+    size_t nd = vector ? 4 : 3;
+    bool ok = a.ndim() == nd;
+    for (size_t i = 0; ok && i < nd; ++i) ok = a.shape(i) == w[i];
+    if (!ok) throw std::invalid_argument(std::string(name) + " must have shape " + (vector ? "(3, nz, ny, nx)" : "(nz, ny, nx)"));
+}
+
 NB_MODULE(_core, m) {
 #ifdef MICROMAG_CUDA
     m.attr("has_cuda") = true;
 #else
     m.attr("has_cuda") = false;
 #endif
+    m.attr("mu0") = mu0;
     m.def("scale", &scale, "x"_a, "a"_a, "cuda"_a = false);
+
+    nb::class_<Grid>(m, "Grid")
+        .def(nb::init<size_t, size_t, size_t, double, double, double>(), "nx"_a, "ny"_a, "nz"_a, "dx"_a, "dy"_a, "dz"_a)
+        .def_ro("nx", &Grid::nx).def_ro("ny", &Grid::ny).def_ro("nz", &Grid::nz)
+        .def_ro("dx", &Grid::dx).def_ro("dy", &Grid::dy).def_ro("dz", &Grid::dz);
+
+    // noconvert: a dtype or layout mismatch must raise, not silently copy (a copied `out` would lose the result).
+    m.def("exchange_field", [](const Grid& g, In mag, In Ms, In A, Out out) {
+        check_shape(mag, g, true, "m"); check_shape(Ms, g, false, "Ms"); check_shape(A, g, false, "A"); check_shape(out, g, true, "out");
+        exchange_field(g, mag.data(), Ms.data(), A.data(), out.data());
+    }, "grid"_a, "m"_a.noconvert(), "Ms"_a.noconvert(), "A"_a.noconvert(), "out"_a.noconvert(), "Exchange field (eq. 8), A/m.");
+
+    m.def("anisotropy_field", [](const Grid& g, In mag, In Ms, In K, In k, Out out) {
+        check_shape(mag, g, true, "m"); check_shape(Ms, g, false, "Ms"); check_shape(K, g, false, "K"); check_shape(k, g, true, "k"); check_shape(out, g, true, "out");
+        anisotropy_field(g, mag.data(), Ms.data(), K.data(), k.data(), out.data());
+    }, "grid"_a, "m"_a.noconvert(), "Ms"_a.noconvert(), "K"_a.noconvert(), "k"_a.noconvert(), "out"_a.noconvert(), "Uniaxial anisotropy field (eq. 9), A/m.");
+
+    m.def("zeeman_field", [](const Grid& g, In Ms, std::array<double, 3> H_ext, Out out) {
+        check_shape(Ms, g, false, "Ms"); check_shape(out, g, true, "out");
+        zeeman_field(g, Ms.data(), H_ext.data(), out.data());
+    }, "grid"_a, "Ms"_a.noconvert(), "H_ext"_a, "out"_a.noconvert(), "Zeeman field (eq. 11), A/m: H_ext in magnetic cells.");
 }

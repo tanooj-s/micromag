@@ -16,7 +16,7 @@ endif()
 find_package(Python 3.10 REQUIRED COMPONENTS Interpreter Development.Module)
 find_package(nanobind CONFIG REQUIRED)
 
-nanobind_add_module(_core src/bindings.cpp)
+nanobind_add_module(_core src/bindings.cpp src/fields.cpp)
 
 if(MICROMAG_CUDA)
   target_sources(_core PRIVATE src/scale.cu)
