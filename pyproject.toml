@@ -1,0 +1,26 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "nanobind>=2.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "micromag"
+version = "0.0.1"
+requires-python = ">=3.10"
+dependencies = ["numpy"]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.scikit-build]
+wheel.packages = ["python/micromag"]
+build-dir = "build/{wheel_tag}"  # keep the CMake build tree between runs so rebuilds are incremental
+cmake.version = ">=3.18"         # the cluster module is 3.17; scikit-build-core fetches a newer cmake from PyPI
+
+[tool.uv]
+# `uv run` rebuilds the extension when any of these change
+cache-keys = [
+  { file = "pyproject.toml" },
+  { file = "CMakeLists.txt" },
+  { file = "src/**" },
+  { env = "SKBUILD_CMAKE_DEFINE" },
+]
