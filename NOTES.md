@@ -9,7 +9,7 @@ Each iteration is done when its check passes and its decisions are logged below.
 | 1 | Grid, per-cell materials, exchange / anisotropy / Zeeman (eqs. 8, 9, 11), CPU | Energies of uniform states; H matches the finite-difference gradient of E; analytic 1D Bloch wall (width π√(A/K)) is in equilibrium (torque → 0) with σ → 4√(AK), both errors falling ~4× per halving of dx (D13) | ✅ CPU (`tests/test_fields.py`) |
 | 2 | Demag: Newell tensor, direct O(N²) oracle, zero-padded FFT (eqs. 17–21) | Uniform prisms (cube, 1:2:3 cell, 32×32×1 film) match Aharoni's closed form to 1e-10; far-field tensor → point dipole with error ~4× smaller per doubling of distance; FFT and direct sum agree to 1e-12 (D17) | ✅ CPU (`tests/test_demag.py`) |
 | 3 | LLG (eq. 25) with a self-written adaptive Dormand–Prince RK45 | Macrospin matches the analytic solution; fixed-step error falls ~32× per halving of h (5th order); energy conserved at α = 0 and non-increasing at α > 0; µMAG SP4 field 1: first ⟨mx⟩ = 0 crossing within 3% of OOMMF and RMS ⟨m⟩ difference ≤ 0.05 over 0–1 ns (D20) | ✅ CPU (`tests/test_llg.py`; SP4 with `-m slow`) |
-| 4 | Minimizer: projected steepest descent with Barzilai–Borwein steps (eqs. 22–23), plus a hysteresis driver | Stoner–Wohlfarth astroid; µMAG SP2 or SP3 | todo |
+| 4 | Minimizer: projected steepest descent with Barzilai–Borwein steps (eqs. 22–23), plus a hysteresis driver | Stoner–Wohlfarth astroid: switching fields at ψ = 15–75° within 2·10⁻³ H_K of `(cos^{2/3}ψ + sin^{2/3}ψ)^{−3/2}`; µMAG SP3 (20³): flower/vortex crossover L within 0.5% of 8.47 l_ex (D23) | **in progress:** design settled (D21–D23), implementing test-first |
 | 5 | GPU backend: CUDA kernels + cuFFT; the backend interface is introduced here | GPU matches CPU on every test; Nsight roofline numbers recorded | todo |
 | 6 | Cluster science: Slurm job-array sweeps, output with provenance (git hash and parameters), scaling study. **Requirement (user, 2026-10-17):** a simple local workflow, parameters in → results out, that runs one simulation on the laptop CPU from an input file or CLI and writes its outputs, without hand-editing a Python script. The cluster sweeps should use the same entry point. | Coercivity vs cube size compared with paper Fig. 8a; one local run from an input file reproduces SP4 | todo |
 | 7 | Stretch, pick one: Voronoi grains / string method (NEB) / multi-GPU / thermal field | — | — |
@@ -38,6 +38,37 @@ Each iteration is done when its check passes and its decisions are logged below.
 - Damping is the dimensional LL `alpha0` rather than Gilbert's dimensionless α.
 - Tests are example scripts with loose tolerances (SP4 allows 100% error), and there are no unit tests per field term.
 - The Python and MATLAB front ends duplicate each other, and the build needs Intel ifx/MKL plus an `#if` flag matrix.
+
+## Reference benchmarks
+Published numbers we compare against. They are kept here so the source and the conditions travel with them.
+
+### µMAG Standard Problem 3: single-domain limit of a cube
+Source: https://www.ctcms.nist.gov/~rdm/results3.html (fetched 2026-10-17). L is the cube edge where the flower and vortex energies are equal, in units of l_ex = √(A/K_m), with K_m = µ₀Ms²/2 and K_u = 0.1 K_m along one cube axis. e is the reduced energy E/(K_m L³).
+
+| Submission | Grid | L / l_ex | e at L |
+|---|---|---|---|
+| Rave, Hubert & Fabian (1998) | not stated | 8.47 | 0.3027 |
+| Martins et al. (1998) | 10³ | 8.4073 | 0.2937 |
+| Martins et al. | extrapolated from 10³–70³ | 8.4687 | 0.3026 |
+| Hertel & Kronmüller (1998), symmetric flower (metastable) | not stated | 8.52 | 0.3049 |
+| Hertel & Kronmüller, twisted flower | not stated | 8.57 | 0.3032 |
+| **Bjørk, Poulsen & Insinga (2021), MagTense** | **20³** | **8.4556** | 0.3029 |
+| Bjørk et al., MagTense | power-law fit, 5³–20³ | 8.477 ± 0.007 | — |
+
+Rave et al.'s partial energies at L = 8.47, in units of K_m L³:
+
+| State | Demag | Exchange | Anisotropy |
+|---|---|---|---|
+| Flower | 0.2794 | 0.0177 | 0.0056 |
+| Vortex | 0.0783 | 0.1723 | 0.0521 |
+
+Coarse grids bias L low (10³ gives about 0.7% low). Hertel's twisted flower is a different, lower-energy state, so it is not comparable to a symmetric-flower computation.
+
+### µMAG Standard Problem 4, field 1
+Source: OOMMF 1.2 (Donahue & Porter), 1 nm cells. The trimmed time series is `tests/data/sp4_field1_oommf.csv`.
+- S-state ⟨m⟩ = (0.9666, 0.1260, 0.0000).
+- First ⟨mx⟩ = 0 crossing at 138.4 ps (interpolated from the 1 ps samples).
+- Ours (iteration 3, 128×32×1): S-state ⟨m⟩ = (0.9670, 0.1253, 0.0000); crossing at 138.6 ps; RMS ⟨m⟩ difference over 0–1 ns = 0.0051.
 
 ## Decision log
 <!-- Format, one entry per decision:
@@ -278,3 +309,52 @@ Each iteration is done when its check passes and its decisions are logged below.
 - **Consequence:** if SP4 fails, the first response is a grid-refinement study, not a looser tolerance.
 - **Finding (2026-10-17):** the S-state relaxation must use tol = 1e-9. At tol = 1e-6, each step's error re-excites a torque of a few × tol, so the max torque plateaus at about 5e-6 and never reaches the 1e-6 threshold. Lowering tol costs almost nothing here: at α = 1 the step size is set by the stability of the stiff exchange term, not by accuracy (similar step counts at 1e-6 and 1e-9). General rule: a torque-based stopping threshold must sit well above tol.
 - **Result:** the S-state ⟨m⟩ is (0.9670, 0.1253, 0.0000) after 2.8 ns. The first ⟨mx⟩ = 0 crossing is at 138.6 ps (OOMMF 138.4 ps, 0.15%). The RMS ⟨m⟩ difference over 0–1 ns is 0.0051. The whole run takes about 23 s on the laptop CPU.
+
+### D21: Minimizer: projected steepest descent with Barzilai–Borwein steps (2026-10-17)
+- **Context:** permanent-magnet fields change slowly compared with precession, so a hysteresis loop is a sequence of energy minima (paper §2.2.3). Iteration 4 needs a minimizer (eqs. 22–23).
+- **Decision:**
+  - A C++ `Minimizer(problem)`, which holds its `Problem` through nanobind `keep_alive`.
+  - Direction `d = −m×(m×H)`, in A/m (eq. 22). Working in field units avoids eq. 23's µ₀MsV factor, which matters when Ms varies per cell.
+  - Update `m ← normalise(m + τd)`. τ alternates BB1 (`s·s / s·y`) and BB2 (`s·y / y·y`), with s = Δm and y = Δd. No line search.
+  - Initial step `τ₀ = 0.01/max|d|`, which turns the largest-torque cell by about 0.01 rad. If `s·y ≤ 0` (non-convex region, common near switching), fall back to the same τ₀ rule. τ resets on every `minimize` call.
+  - `minimize(m, torque_tol=1e-6, max_iter=100_000)` stops when max|m×H|/Ms < torque_tol, updates m in place, and returns the iteration count. It raises if it reaches max_iter, so a half-converged state near a switching field is never returned silently.
+- **Alternatives:**
+  - Adding a line search: monotone, but costs extra field and demag evaluations per iteration.
+  - Nonlinear conjugate gradient: more machinery for a similar result at our sizes.
+  - Gill's threefold stopping criterion: three tolerances to tune.
+  - A Python loop: same GPU objection as D18.
+- **Consequence:** this is Exl et al. (2014)'s method and essentially MuMax3's `minimize`. The energy can rise on individual iterations; convergence is judged by torque only.
+
+### D22: `Problem.energies` in C++; hysteresis driver in Python (refines D10) (2026-10-17)
+- **Context:** the hysteresis driver and SP3 need energies from a `Problem`. `Problem` copies its materials (D19), so the numpy formula from D10 would need the arrays a second time.
+- **Decision:**
+  - `Problem.energies(m)` returns `{exchange, anisotropy, zeeman, demag}` in J, each `−c·µ₀·dV·Σ Ms(m·H)` with c = ½, ½, 1, ½.
+  - `mm.hysteresis(problem, m, fields, minimizer)` (Python) minimizes at each field in `fields` (shape (n,3), A/m) and returns a flat dict of arrays: `H` (n,3), `m` (n,3) = ⟨m⟩ over magnetic cells (Ms > 0), the four energies (n,), and `iterations` (n,). The final state stays in `m`.
+- **Alternatives:**
+  - Keeping energy in numpy (D10): duplicates material state.
+  - Returning only the total energy: SP3 asks for the partial energies, and Rave et al. publish theirs.
+  - Averaging ⟨m⟩ over all cells: vacuum dilutes it.
+  - Storing full-m snapshots per field: costs n×3N numbers before anything needs them.
+- **Consequence:** `np.savez(path, **result)` saves a loop, which is the seed of iteration 6's results output. The GPU port needs a reduction kernel for the energies.
+
+### D23: Iteration-4 checks (2026-10-17)
+- **Context:** the minimizer needs one check with an exact answer (the macrospin) and one multi-cell check against published results.
+- **Decision:**
+  - **Stoner–Wohlfarth astroid:**
+    - Setup: one cubic cell (its demag field is parallel to m), easy axis z, H_K = 2K/(µ₀Ms), field at ψ ∈ {15°, 30°, 45°, 60°, 75°} from the easy axis.
+    - Sweep: from 0 to −1.2 H_K in steps of Δh = 10⁻³ H_K.
+    - Measurement: the switching field is the step with the largest |Δm|. Away from the switch m moves about Δh per step, and about √Δh just before it; the jump itself is O(1).
+    - Pass: within 2Δh of `(cos^{2/3}ψ + sin^{2/3}ψ)^{−3/2}`.
+    - 0° and 90° are excluded, because there the reversed state is an exact (unstable) equilibrium that an exact minimizer never leaves.
+  - **µMAG SP3** (marked `slow`):
+    - Setup: a 20³ cube, K_u = 0.1 K_m along z.
+    - Starting states: the flower starts uniform along z, and the vortex starts at `normalise(−y, x, L/5)`. Both starts are symmetric, with no noise, so the result is the symmetric flower that Rave, Martins and MagTense computed, not Hertel's twisted flower.
+    - Distinctness: after minimizing, ⟨mz⟩ > 0.9 for the flower and < 0.5 for the vortex.
+    - Search: bisect Δe(L) = e_flower − e_vortex over [8, 9] l_ex until the bracket is < 0.005 l_ex. Each new L starts from the previous minimized states; at a fixed grid, changing L only rescales the cells.
+    - Pass: |L/8.47 − 1| ≤ 0.5%. MagTense's 20³ value (8.4556) and Rave et al.'s partial energies are printed for comparison (see Reference benchmarks).
+- **Alternatives:**
+  - µMAG SP2: needs grids up to about 30 l_ex, a job for the GPU in iteration 6.
+  - The secant method: can diverge if Δe(L) is not smooth.
+  - scipy's root finders: a new dependency for 10 lines.
+  - Random-noise starts: a different state and a different reference value.
+- **Consequence:** the roadmap check was reworded to match.
