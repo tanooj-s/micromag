@@ -3,11 +3,14 @@
 #include <nanobind/stl/array.h>
 
 #include <array>
+#include <limits>
 #include <stdexcept>
 #include <string>
 
 #include "demag.hpp"
 #include "fields.hpp"
+#include "llg.hpp"
+#include "problem.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -89,4 +92,24 @@ NB_MODULE(_core, m) {
             check_shape(mag, g, true, "m"); check_shape(Ms, g, false, "Ms"); check_shape(out, g, true, "out");
             d.field(mag.data(), Ms.data(), out.data());
         }, "m"_a.noconvert(), "Ms"_a.noconvert(), "out"_a.noconvert(), "Demagnetizing field (eq. 21), A/m.");
+
+    nb::class_<Problem>(m, "Problem")
+        .def("__init__", [](Problem* p, const Grid& g, In Ms, In A, In K, In k, std::array<double, 3> H_ext) {
+            check_shape(Ms, g, false, "Ms"); check_shape(A, g, false, "A"); check_shape(K, g, false, "K"); check_shape(k, g, true, "k");
+            new (p) Problem(g, Ms.data(), A.data(), K.data(), k.data(), H_ext);  // copies the materials (D19)
+        }, "grid"_a, "Ms"_a.noconvert(), "A"_a.noconvert(), "K"_a.noconvert(), "k"_a.noconvert(), "H_ext"_a)
+        .def_rw("H_ext", &Problem::H_ext, "External field (A/m).")
+        .def("effective_field", [](Problem& p, In mag, Out out) {
+            check_shape(mag, p.grid(), true, "m"); check_shape(out, p.grid(), true, "out");
+            p.effective_field(mag.data(), out.data());
+        }, "m"_a.noconvert(), "out"_a.noconvert(), "Sum of exchange, anisotropy, Zeeman and demag fields, A/m.");
+
+    nb::class_<LLG>(m, "LLG")
+        .def(nb::init<Problem&, double, double, double, double>(), "problem"_a, "alpha"_a, "gamma"_a = 1.76086e11,
+             "tol"_a = 1e-6, "max_step"_a = std::numeric_limits<double>::infinity(), nb::keep_alive<1, 2>())
+        .def("run_until", [](LLG& l, Out mag, double t) {
+            check_shape(mag, l.grid(), true, "m");
+            l.run_until(mag.data(), t);
+        }, "m"_a.noconvert(), "t"_a, "Advance m in place from llg.t to t (s).")
+        .def_ro("t", &LLG::t).def_ro("steps", &LLG::steps).def_ro("rejected", &LLG::rejected);
 }

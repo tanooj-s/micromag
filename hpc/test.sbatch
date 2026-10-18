@@ -13,4 +13,4 @@ module load gcc/8.4.0/1 cuda/12.1
 
 nvidia-smi -L
 uv run --no-sync python -c "import micromag, sys; sys.exit(0 if micromag.has_cuda else 'built without CUDA; rebuild per CLAUDE.md')"
-uv run --no-sync pytest -v
+uv run --no-sync pytest -v -m ""  # -m "": include the slow tests

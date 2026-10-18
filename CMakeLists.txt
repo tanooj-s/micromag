@@ -23,7 +23,7 @@ FetchContent_Declare(pocketfft
   URL_HASH SHA256=2d90016da31a8cc1dd0ac0c89c1f2fb55df8f4ccc3f0386dcfbad09ac6d1c3ba)
 FetchContent_MakeAvailable(pocketfft)  # no CMakeLists.txt in the archive, so this only downloads
 
-nanobind_add_module(_core src/bindings.cpp src/fields.cpp src/demag.cpp)
+nanobind_add_module(_core src/bindings.cpp src/fields.cpp src/demag.cpp src/problem.cpp src/llg.cpp)
 target_include_directories(_core PRIVATE ${pocketfft_SOURCE_DIR})
 target_compile_definitions(_core PRIVATE POCKETFFT_NO_MULTITHREADING)
 
