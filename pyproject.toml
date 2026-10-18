@@ -9,7 +9,10 @@ requires-python = ">=3.10"
 dependencies = ["numpy"]
 
 [dependency-groups]
-dev = ["pytest"]
+dev = [
+    "mpmath>=1.4.1",
+    "pytest",
+]
 
 [tool.scikit-build]
 wheel.packages = ["python/micromag"]

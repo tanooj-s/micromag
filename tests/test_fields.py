@@ -4,7 +4,7 @@ import pytest
 import micromag as mm
 
 H_EXT = np.array([1e5, -2e5, 3e5])
-C = {"exchange": 0.5, "anisotropy": 0.5, "zeeman": 1.0}  # energy prefactor per term (D10)
+C = {"exchange": 0.5, "anisotropy": 0.5, "zeeman": 1.0, "demag": 0.5}  # energy prefactor per term (D10)
 
 
 def random_problem(seed=0):
@@ -21,7 +21,7 @@ def random_problem(seed=0):
     assert (Ms == 0).any()
     A = rng.uniform(5e-12, 15e-12, s)
     K = rng.uniform(1e6, 5e6, s)
-    return dict(grid=g, m=m, Ms=Ms, A=A, K=K, k=k)
+    return dict(grid=g, m=m, Ms=Ms, A=A, K=K, k=k, demag=mm.Demag(g))
 
 
 def field(term, p, m):
@@ -30,6 +30,8 @@ def field(term, p, m):
         mm.exchange_field(p["grid"], m, p["Ms"], p["A"], out)
     elif term == "anisotropy":
         mm.anisotropy_field(p["grid"], m, p["Ms"], p["K"], p["k"], out)
+    elif term == "demag":
+        p["demag"].field(m, p["Ms"], out)
     else:
         mm.zeeman_field(p["grid"], p["Ms"], H_EXT, out)
     return out
@@ -118,5 +120,7 @@ def test_binding_rejects_mismatched_arrays():
     out = np.empty_like(p["m"])
     with pytest.raises(ValueError):  # axes in (x, y, z) order instead of (z, y, x)
         mm.exchange_field(g, np.empty((3, g.nx, g.ny, g.nz)), p["Ms"], p["A"], out)
+    with pytest.raises(ValueError):
+        p["demag"].field(np.empty((3, g.nx, g.ny, g.nz)), p["Ms"], out)
     with pytest.raises(TypeError):  # implicit conversion would write H into a hidden copy
         mm.exchange_field(g, p["m"], p["Ms"], p["A"], out.astype(np.float32))

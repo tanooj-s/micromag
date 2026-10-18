@@ -6,6 +6,7 @@
 #include <stdexcept>
 #include <string>
 
+#include "demag.hpp"
 #include "fields.hpp"
 
 namespace nb = nanobind;
@@ -74,4 +75,18 @@ NB_MODULE(_core, m) {
         check_shape(Ms, g, false, "Ms"); check_shape(out, g, true, "out");
         zeeman_field(g, Ms.data(), H_ext.data(), out.data());
     }, "grid"_a, "Ms"_a.noconvert(), "H_ext"_a, "out"_a.noconvert(), "Zeeman field (eq. 11), A/m: H_ext in magnetic cells.");
+
+    m.def("demag_tensor", [](const Grid& g) {
+        auto* N = new std::vector<double>(demag_tensor(g));
+        nb::capsule owner(N, [](void* p) noexcept { delete static_cast<std::vector<double>*>(p); });
+        return nb::ndarray<nb::numpy, double>(N->data(), {6, padded(g.nz), padded(g.ny), padded(g.nx)}, owner);
+    }, "grid"_a, "Demag tensor (6, Pz, Py, Px): xx, yy, zz, xy, xz, yz in FFT wraparound order (negative index = negative offset).");
+
+    nb::class_<Demag>(m, "Demag")
+        .def(nb::init<const Grid&>(), "grid"_a)
+        .def("field", [](Demag& d, In mag, In Ms, Out out) {
+            const Grid& g = d.grid();
+            check_shape(mag, g, true, "m"); check_shape(Ms, g, false, "Ms"); check_shape(out, g, true, "out");
+            d.field(mag.data(), Ms.data(), out.data());
+        }, "m"_a.noconvert(), "Ms"_a.noconvert(), "out"_a.noconvert(), "Demagnetizing field (eq. 21), A/m.");
 }

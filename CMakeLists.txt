@@ -16,7 +16,16 @@ endif()
 find_package(Python 3.10 REQUIRED COMPONENTS Interpreter Development.Module)
 find_package(nanobind CONFIG REQUIRED)
 
-nanobind_add_module(_core src/bindings.cpp src/fields.cpp)
+# D15: header-only pocketfft for the CPU FFT, pinned by hash; single-threaded so the oracle is reproducible
+include(FetchContent)
+FetchContent_Declare(pocketfft
+  URL https://github.com/mreineck/pocketfft/archive/c90e55b3d529f8efa40ed01a20de22405f45fc65.tar.gz
+  URL_HASH SHA256=2d90016da31a8cc1dd0ac0c89c1f2fb55df8f4ccc3f0386dcfbad09ac6d1c3ba)
+FetchContent_MakeAvailable(pocketfft)  # no CMakeLists.txt in the archive, so this only downloads
+
+nanobind_add_module(_core src/bindings.cpp src/fields.cpp src/demag.cpp)
+target_include_directories(_core PRIVATE ${pocketfft_SOURCE_DIR})
+target_compile_definitions(_core PRIVATE POCKETFFT_NO_MULTITHREADING)
 
 if(MICROMAG_CUDA)
   target_sources(_core PRIVATE src/scale.cu)

@@ -7,7 +7,7 @@ Each iteration is done when its check passes and its decisions are logged below.
 |---|-----------|-------|--------|
 | 0 | Toolchain: CMake + bindings + pytest + one CUDA kernel, run on a laptop and on a cluster GPU node through Slurm | Kernel test passes in both places | laptop ✅ · cluster blocked (see below) |
 | 1 | Grid, per-cell materials, exchange / anisotropy / Zeeman (eqs. 8, 9, 11), CPU | Energies of uniform states; H matches the finite-difference gradient of E; analytic 1D Bloch wall (width π√(A/K)) is in equilibrium (torque → 0) with σ → 4√(AK), both errors falling ~4× per halving of dx (D13) | ✅ CPU (`tests/test_fields.py`) |
-| 2 | Demag: Newell tensor, direct O(N²) oracle, zero-padded FFT (eqs. 17–21) | Uniform prisms (cube, 1:2:3 cell, 32×32×1 film) match Aharoni's closed form to 1e-10; far-field tensor → point dipole with error ~4× smaller per doubling of distance; FFT and direct sum agree to 1e-12 (D17) | **in progress:** design settled (D14–D17), implementing test-first |
+| 2 | Demag: Newell tensor, direct O(N²) oracle, zero-padded FFT (eqs. 17–21) | Uniform prisms (cube, 1:2:3 cell, 32×32×1 film) match Aharoni's closed form to 1e-10; far-field tensor → point dipole with error ~4× smaller per doubling of distance; FFT and direct sum agree to 1e-12 (D17) | ✅ CPU (`tests/test_demag.py`) |
 | 3 | LLG (eq. 25) with a self-written adaptive Dormand–Prince RK45 | Macrospin matches the analytic solution; µMAG SP4 within a few % | todo |
 | 4 | Minimizer: projected steepest descent with Barzilai–Borwein steps (eqs. 22–23), plus a hysteresis driver | Stoner–Wohlfarth astroid; µMAG SP2 or SP3 | todo |
 | 5 | GPU backend: CUDA kernels + cuFFT; the backend interface is introduced here | GPU matches CPU on every test; Nsight roofline numbers recorded | todo |
@@ -194,7 +194,7 @@ Each iteration is done when its check passes and its decisions are logged below.
   - Point dipole far: cannot reach better than about 1e-3 for non-cubic cells at reasonable cutoffs.
   - More Gauss points (4–5 per axis) to keep 1e-8: slower setup, and flat cells still need more.
   - OOMMF's higher-order asymptotic expansion (Donahue): most accurate and fast, but a lot of formula. A stretch goal if a test ever needs better than 1e-6.
-- **Consequence:** the tensor is good to about 1e-6, far below the O(dx²) discretisation error (about 1e-3). **Known limit:** cells flatter than about 1:4 are untested and may exceed 1e-6 at the cutoff.
+- **Consequence:** the tensor is good to about 1e-6 (as built, the worst measured case is 5.3e-7: 1:1:0.25 cells, 21 cells away along z), far below the O(dx²) discretisation error (about 1e-3). **Known limit:** cells flatter than about 1:4 are untested and may exceed 1e-6 at the cutoff.
 
 ### D15: FFT convolution: pocketfft, 2n zero padding, real-to-complex (2026-10-17)
 - **Context:** eq. 21 is a convolution, because N depends only on the offset between cells. The CPU path is the oracle; cuFFT is the production path.
