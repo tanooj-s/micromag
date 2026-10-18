@@ -11,12 +11,13 @@ Each iteration is done when its check passes and its decisions are logged below.
 | 3 | LLG (eq. 25) with a self-written adaptive Dormand–Prince RK45 | Macrospin matches the analytic solution; fixed-step error falls ~32× per halving of h (5th order); energy conserved at α = 0 and non-increasing at α > 0; µMAG SP4 field 1: first ⟨mx⟩ = 0 crossing within 3% of OOMMF and RMS ⟨m⟩ difference ≤ 0.05 over 0–1 ns (D20) | ✅ CPU (`tests/test_llg.py`; SP4 with `-m slow`) |
 | 4 | Minimizer: projected steepest descent with Barzilai–Borwein steps (eqs. 22–23), plus a hysteresis driver | Stoner–Wohlfarth astroid: switching fields at ψ = 15–75° within 2·10⁻³ H_K of `(cos^{2/3}ψ + sin^{2/3}ψ)^{−3/2}`; µMAG SP3 (20³): flower/vortex crossover L within 0.5% of 8.47 l_ex (D23) | ✅ CPU (`tests/test_minimizer.py`; SP3 with `-m slow`) |
 | 5 | GPU backend: CUDA kernels + cuFFT; the backend interface is introduced here | Every test passes with `device="cuda"` and the direct CPU-vs-GPU comparisons hold their D26 tolerances, run on at least one CUDA GPU of sm_70 or newer (which GPU is recorded). Nsight roofline numbers are optional (D25) | ✅ CPU + GPU (Tesla T4, CUDA 13.0, Colab, 2026-10-18; D26 Result) |
-| 6 | Cluster science: Slurm job-array sweeps, output with provenance (git hash and parameters), scaling study. **Requirement (user, 2026-10-17):** a simple local workflow, parameters in → results out, that runs one simulation on the laptop CPU from an input file or CLI and writes its outputs, without hand-editing a Python script. The cluster sweeps should use the same entry point. | Coercivity vs cube size compared with paper Fig. 8a; one local run from an input file reproduces SP4 | todo |
+| 6a | Workflow: one simulation from a TOML input card into a results folder (per-stage CSV thermo tables, an HDF5 dump of magnetic states, provenance) through `micromag run` and `micromag.run()` (D27, D28). **Requirement (user, 2026-10-17):** a simple local workflow, parameters in → results out, from an input file, without hand-editing a Python script, with the same entry point on any machine | `examples/sp4.toml` run through `run()` meets D20's SP4 criteria; fast tests of validation, the results folder, restarts, dumps and failure handling (D29) | **in progress**: design settled 2026-10-18 |
+| 6b | Science runs: sweeps over cards (a local loop; Slurm job arrays optional), material regions (core–shell), the Fig. 8a cube on a GPU; scaling study and Nsight optional (D25) | Coercivity vs cube size compared with paper Fig. 8a (tolerance set in the 6b design) | todo |
 | 7 | Stretch, pick one: Voronoi grains / string method (NEB) / multi-GPU / thermal field | — | — |
 
 ## Resume here
 State on 2026-10-18: iterations 1–5 are done. Iteration 5 passes on a Tesla T4 (Colab, CUDA 13.0; D26 Result). `uv run pytest` on the laptop gives 43 passed, 30 skipped (the CUDA cases) and 4 deselected (slow).
-- **Next:** iteration 6. The cluster remains an optional GPU target (D25); its build needs the numpy cap (see the optional open issue below).
+- **Next:** iteration 6a (design D27–D29, settled 2026-10-18; iteration 6 was split into 6a and 6b the same day). The cluster remains an optional GPU target (D25); its build needs the numpy cap (see the optional open issue below).
 - **CUDA compile check without a GPU** (rerun after CUDA changes), from the repo root, with Docker Desktop for Apple Silicon:
   ```
   docker run --rm -v "$PWD":/src -w /src -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e SKBUILD_CMAKE_DEFINE=MICROMAG_CUDA=ON \
@@ -41,6 +42,7 @@ State on 2026-10-18: iterations 1–5 are done. Iteration 5 passes on a Tesla T4
 ### Optional open issue: cluster build (deferred 2026-10-17; optional since 2026-10-18, D25)
 - **Symptom:** `uv sync` builds numpy 2.5.4 from source, and the build fails because the system `cc` is gcc 4.8.5 (RHEL 7).
 - **Cause (verified 2026-10-18 against PyPI and the numpy 2.3.0 release notes):** RHEL 7 has glibc 2.17. numpy 2.3 moved from manylinux2014 to manylinux_2_28 wheels, which drops RHEL/CentOS 7. **numpy 2.2.6 is the last release with glibc 2.17 wheels for cp313.** With no matching wheel, uv falls back to a source build.
+- **Also h5py (added in 6a, D28):** its current Linux wheels are manylinux_2_28 too, so it needs the same treatment: a cap at a version with manylinux2014 wheels, or a source build.
 - **Fix:** cap numpy below 2.3 (`numpy<2.3`). `uv.lock` is universal, so the laptop also moves to 2.2.6, which keeps both machines identical (the D8 reasoning).
 - **Won't work:** `export CC=gcc` after the gcc 8.4 load. numpy ≥ 2.3 needs gcc ≥ 9.3 to build, and `cuda/12.1` is only offered under gcc 8.4 (D4).
 - **After that:** the CMake log should report `The CXX compiler identification is GNU 8.4.0`. If it shows 4.8.5, `export CXX=g++`. The cmake and ninja wheels from PyPI still support glibc 2.17.
@@ -450,3 +452,81 @@ Source: OOMMF 1.2 (Donahue & Porter), 1 nm cells. The trimmed time series is `te
   - M2, exchange using dx in place of dy for the +y neighbour: caught by the exchange gradient test (the operator is no longer symmetric), the oracle comparison, energy conservation, the fixed-step comparison and the energies test.
   - M3, `lincomb` dropping its last term: caught by the macrospin test (the run used `-x`, so only the first failure is recorded). Without `-x` the run is very slow, because the broken step keeps the error estimate high and the controller keeps shrinking the step.
   - M4, the BB sums over the x components only: caught by Stoner–Wohlfarth at 15° (with `-x`). The design expected this one might survive.
+
+### D27: Input card: TOML, setup then ordered stages (2026-10-18)
+- **Context:** iteration 6a needs one simulation described by a file, with no Python edits (user requirement, 2026-10-17). The user asked for something like a LAMMPS input script, formatted as YAML unless something better fits.
+- **Decision:**
+  - **TOML**, read by the standard library's `tomllib` (Python ≥ 3.11; `requires-python` rises to 3.11).
+  - **Setup sections:**
+    - optional `device` (default "cpu")
+    - `[grid]`: `n` (cells) and `cell` (m)
+    - `[material]`: `Ms` (A/m) and `A` (J/m), plus optional `K` (J/m³, default 0) and `axis` (default [0, 0, 1])
+    - `[initial]`: exactly one of `m = [...]` (uniform, normalised on load) or `file` pointing to a `magnetic_states.h5`. A file takes an optional `state`: `"final"` (the default), or `"stage<k>"` for the last snapshot of stage k. The path is relative to the card. The file's SHA-256 is recorded, and its grid must match the card's.
+  - **Stages:** an ordered list of `[[stage]]` entries, run top to bottom. The card has no variables, loops or conditionals; sweeps belong to 6b.
+  - **Units:** SI throughout. Applied fields are `mu0_H`, µ₀H_ext in tesla, because every reference quotes T or mT.
+  - **What carries over:** the magnetisation always carries over between stages, as an MD configuration does. The applied field is **stage-local**: it defaults to zero and is never carried over. Every thermo row records the field it was computed at.
+  - **Stage types** (they solve different problems; see the physics notes in the 6a design discussion):
+    - **`llg-dynamics`**: eq. 25 in real time.
+      - Keys: `alpha` (required), `gamma` (default 1.76086e11 rad/(T·s)), `mu0_H`, `tol` (default 1e-6), `max_step` (default none), optional `dump_every` (s).
+      - Stopping rule, exactly one of: `duration` with an optional `sample_every` (rows at the start, every interval and the end); or `until_torque`, `check_every` and `max_duration`, all required.
+      - Validation rejects `tol > until_torque/100`: each step's error re-excites a torque of a few × tol, so the threshold would never be reached (D20).
+    - **`minimize`**: eqs. 22–23, the nearest equilibrium at a fixed field. Keys: `mu0_H`, `torque_tol` (1e-6), `max_iter` (100000).
+    - **`hysteresis`**: a quasi-static sweep, minimizing at each field (D22).
+      - Keys: `direction` (normalised), `mu0_H_from`, `mu0_H_to` and `mu0_H_step` (T, step > 0, from → to inclusive), `torque_tol`, `max_iter`, optional `dump = true`.
+      - A full loop is two stages.
+  - **Validation** is strict and runs before anything else: an unknown key is an error that names it and lists the valid keys, and missing required keys and wrong types or shapes are errors too. It's plain Python with dataclasses.
+- **Alternatives:**
+  - YAML: PyYAML reads `8e5` as the string `'8e5'`, while it reads `1.3e-11` as a float (checked with PyYAML 6.0.3). That's a silent trap in an SI input file, and YAML is also a new dependency.
+  - A LAMMPS-style command language: a parser and error messages to write and test.
+  - Carrying the field over between stages, as a LAMMPS `fix` persists: discussed and rejected by the user; the field is an external condition each stage states for itself.
+  - Fields in A/m: −19,576 A/m instead of −24.6 mT invites mistakes.
+  - Both `gamma` and `mu0_gamma`: two ways to say one thing. SP4's card states γ with a comment.
+  - pydantic for validation: a dependency for something this small.
+- **Consequence:** a card reads like a LAMMPS script, but each stage can be understood on its own. 6b adds material regions and sweeps on top.
+
+### D28: Entry point and results folder: CSV thermo, HDF5 dump, provenance (2026-10-18)
+- **Context:** a run must be reproducible from its folder alone and must never silently overwrite a result.
+- **Decision:**
+  - **Entry point:** `micromag run CARD -o DIR [--device cuda]`, a thin wrapper around `micromag.run(card, out, device=None)` (`[project.scripts]`). `--device` overrides the card, so one card runs on the laptop, Colab or a cluster.
+  - **Output folder:** `-o` is required, and a non-empty `DIR` is refused.
+  - **Folder contents:**
+    - `card.toml`: copied byte for byte.
+    - `provenance.json`: the git hash and dirty flag (`null` with a warning outside a git checkout), micromag, numpy, h5py and Python versions, the device and GPU name, start and end times, wall time per stage, and the status and error.
+    - `git.diff`: when the tree is dirty. A dirty tree is recorded and warned about, never refused.
+    - **Thermo** (like LAMMPS thermo output): `stage<k>_<type>.csv`, one file per stage because the columns differ by stage type. Rows are flushed as they're written, so `tail -f` works.
+      - `llg-dynamics`: `t, mu0_Hx, mu0_Hy, mu0_Hz, mx, my, mz, E_exchange, E_anisotropy, E_zeeman, E_demag, E_total, steps, rejected`.
+      - `minimize` and `hysteresis`: `mu0_Hx, mu0_Hy, mu0_Hz, mx, my, mz`, the same energies, and `iterations`.
+      - ⟨m⟩ is averaged over magnetic cells. Time restarts at 0 in each stage. Energies are in J and always recorded; computing them costs about 25% extra at SP4's 1 ps sampling, so make them optional only if profiling says so.
+    - **Dump** (like a LAMMPS dump file): `magnetic_states.h5`, written with h5py.
+      - Data: float64, so restarts are exact, compressed losslessly with shuffle + gzip.
+      - Group `stage<k>`: an extendable `m` stack (n, 3, nz, ny, nx), with `t` (`llg-dynamics`) or `mu0_H` (`minimize`, `hysteresis`) per snapshot. The default is one snapshot at the end of the stage; `dump_every` or `dump = true` adds more.
+      - Groups `final` and, on failure, `failed`.
+      - Attributes: grid `n`, `cell` (m), units, stage type.
+  - **Progress:** one line printed when each stage ends, including the field.
+  - **Failure:** a stage that fails (`max_duration`, `max_iter`, or a solver error) stops the run. Everything written so far is kept, the last state goes into `failed`, `provenance.json` records `status: failed` and the error, and the command exits non-zero.
+- **Measurements behind the format (2026-10-18):** lossless compression of relaxed float64 states saves little. On the SP4 S-state, zlib gives 0.78× and shuffle + gzip 0.79×. On the SP3 vortex, they give 0.70× and 0.58×. Float32 + shuffle + gzip reaches 0.21–0.34×, but it is lossy and would make restarts inexact. HDF5 was chosen for organisation, not size: one self-describing file, appendable snapshot series, partial reads, and readers in MATLAB, ParaView (via XDMF) and Julia. A 100 nm cube at 1 nm cells is 24 MB per snapshot.
+- **Alternatives:**
+  - `.npy` per state: no dependency, but no metadata and no series.
+  - `np.savez_compressed`: about 0.7×, but awkward outside Python.
+  - OVF: the micromagnetics viewers' format, with no compression; add it when a viewer needs it.
+  - float32 states: lossy.
+  - A single `thermo.csv` with a stage column: blank cells, and rows to filter.
+  - A default output folder with a timestamp: fills up with unnamed runs.
+  - Refusing to run on a dirty tree: blocks everyday work.
+- **Consequence:** h5py becomes a dependency. Its Linux wheels need glibc ≥ 2.28, so the optional cluster build needs a cap, like numpy. 6b's sweeps write one such folder per run.
+
+### D29: Iteration-6a checks (2026-10-18)
+- **Context:** the workflow layer must reproduce a solver result exactly, and its own behaviour (validation, restarts, dumps, failure) needs tests that run in milliseconds.
+- **Decision:**
+  - **Slow:** `examples/sp4.toml` run through `run()` into a temporary folder. Read `stage2_llg-dynamics.csv` and apply D20's criteria: S-state ⟨m⟩ within 0.01 of OOMMF, first ⟨mx⟩ = 0 crossing within 3%, RMS ≤ 0.05. It should print the direct test's numbers (138.6 ps, RMS 0.0051). The card's γ is 2.211e5/µ₀ = 1.759457895880903e11. The existing SP4 test stays, because it checks the solver without the card layer.
+  - **Fast:**
+    - `tests/test_card.py`: validation errors and parsing, including `8e5` as a number and the `tol` versus `until_torque` rule.
+    - `tests/test_run.py`, on a tiny card:
+      - the folder layout, the byte-identical card copy, the provenance keys and the diff on a dirty tree
+      - refusal of a non-empty folder
+      - restarts from `final` and from `stage<k>`, and rejection of a grid mismatch
+      - snapshot counts and times or fields for `dump_every` and `dump`
+      - one hysteresis row per field
+      - the `--device` override through the CLI
+      - failure handling: the `failed` state, the status, and the exit code
+- **Consequence:** the roadmap row for 6a states this check.
