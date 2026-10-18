@@ -27,9 +27,15 @@ nanobind_add_module(_core src/bindings.cpp src/fields.cpp src/demag.cpp src/prob
 target_include_directories(_core PRIVATE ${pocketfft_SOURCE_DIR})
 target_compile_definitions(_core PRIVATE POCKETFFT_NO_MULTITHREADING)
 
+# D24/D25: the CUDA sources build as their own static library, so nanobind's host compiler flags never reach nvcc.
 if(MICROMAG_CUDA)
-  target_sources(_core PRIVATE src/scale.cu)
+  find_package(CUDAToolkit REQUIRED)
+  add_library(micromag_cuda STATIC src/scale.cu src/cuda_backend.cu)
+  set_target_properties(micromag_cuda PROPERTIES POSITION_INDEPENDENT_CODE ON CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
+  target_compile_definitions(micromag_cuda PRIVATE MICROMAG_CUDA)
+  target_link_libraries(micromag_cuda PRIVATE CUDA::cudart_static CUDA::cufft)
   target_compile_definitions(_core PRIVATE MICROMAG_CUDA)
+  target_link_libraries(_core PRIVATE micromag_cuda)
 endif()
 
 install(TARGETS _core LIBRARY DESTINATION micromag)

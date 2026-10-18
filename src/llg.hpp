@@ -8,7 +8,7 @@
 class LLG {
 public:
     LLG(Problem& p, double alpha, double gamma, double tol, double max_step);
-    void run_until(double* m, double t_end);  // advances m in place from t to t_end
+    void run_until(double* m, double t_end);  // advances host m in place from t to t_end; the run stays on the device (D24)
     const Grid& grid() const { return p_.grid(); }
 
     double t = 0;
@@ -19,5 +19,6 @@ private:
 
     Problem& p_;
     double alpha_, gamma_, tol_, max_step_, h_ = 0;
-    std::vector<double> k_[7], y_, H_;
+    std::vector<Buffer> k_;  // the 7 stages
+    Buffer m_, y_, H_, e_;
 };

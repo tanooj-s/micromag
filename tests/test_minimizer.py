@@ -5,17 +5,18 @@ import micromag as mm
 from test_fields import C, H_EXT, energy, random_problem
 
 
-def test_problem_energies_match_numpy():
-    # Problem.energies (C++) against the numpy formula of D10, term by term.
+def test_problem_energies_match_numpy(device):
+    # Problem.energies (C++) against the numpy formula of D10 on CPU fields, term by term.
+    # D26: 1e-12 relative also covers the GPU, whose reductions sum in a different order.
     p = random_problem()
-    prob = mm.Problem(p["grid"], p["Ms"], p["A"], p["K"], p["k"], H_EXT)
+    prob = mm.Problem(p["grid"], p["Ms"], p["A"], p["K"], p["k"], H_EXT, device=device)
     E = prob.energies(p["m"])
     for term in C:
         assert np.isclose(E[term], energy(term, p, p["m"]), rtol=1e-12, atol=0), term
 
 
 @pytest.mark.parametrize("psi_deg", [15, 30, 45, 60, 75])
-def test_stoner_wohlfarth_switching_field(psi_deg):
+def test_stoner_wohlfarth_switching_field(psi_deg, device):
     # One cubic cell: its demag field is parallel to m, so this is the Stoner–Wohlfarth particle (D23).
     Ms, K = 8e5, 5e5
     HK = 2 * K / (mm.mu0 * Ms)
@@ -23,7 +24,7 @@ def test_stoner_wohlfarth_switching_field(psi_deg):
     one = np.ones((1, 1, 1))
     k = np.zeros((3, 1, 1, 1))
     k[2] = 1.0
-    prob = mm.Problem(g, Ms * one, 1e-11 * one, K * one, k, (0, 0, 0))
+    prob = mm.Problem(g, Ms * one, 1e-11 * one, K * one, k, (0, 0, 0), device=device)
 
     psi, dh = np.radians(psi_deg), 1e-3
     h = -np.arange(0, 1.2 + dh / 2, dh)  # field in units of H_K, swept from 0 to -1.2
@@ -40,7 +41,7 @@ def test_stoner_wohlfarth_switching_field(psi_deg):
 
 
 @pytest.mark.slow
-def test_sp3_single_domain_limit():
+def test_sp3_single_domain_limit(device):
     N, Ms, A = 20, 8e5, 1.3e-11
     Km = mm.mu0 * Ms**2 / 2
     lex = np.sqrt(A / Km)
@@ -61,7 +62,7 @@ def test_sp3_single_domain_limit():
     def reduced_energies(L):
         """Minimize both states at edge L (in l_ex), in place; return their partial energies / (K_m L³)."""
         d = L * lex / N
-        prob = mm.Problem(mm.Grid(N, N, N, d, d, d), Ms * one, A * one, 0.1 * Km * one, k, (0, 0, 0))
+        prob = mm.Problem(mm.Grid(N, N, N, d, d, d), Ms * one, A * one, 0.1 * Km * one, k, (0, 0, 0), device=device)
         mn = mm.Minimizer(prob)
         out = []
         for m in (flower, vortex):  # warm start: at a fixed grid, changing L only rescales the cells

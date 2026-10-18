@@ -9,18 +9,18 @@ from test_fields import C, H_EXT, energy, random_problem
 GAMMA = 1.76086e11  # rad/(T·s), the paper's value and the LLG default
 
 
-def macrospin(Hz):
+def macrospin(Hz, device):
     """One cubic cell in a field along z. Its demag field is -Ms m/3, parallel to m, so it exerts no torque."""
     g = mm.Grid(1, 1, 1, 2e-9, 2e-9, 2e-9)
     one = np.ones((1, 1, 1))
-    return mm.Problem(g, 8e5 * one, 1e-11 * one, 0 * one, np.zeros((3, 1, 1, 1)), (0, 0, Hz))
+    return mm.Problem(g, 8e5 * one, 1e-11 * one, 0 * one, np.zeros((3, 1, 1, 1)), (0, 0, Hz), device=device)
 
 
-def macrospin_error(alpha, t_end, samples, **llg_args):
+def macrospin_error(alpha, t_end, samples, device, **llg_args):
     """Largest |m - m_exact| at the sample times, starting from θ0 = 30° in 1e5 A/m along z."""
     H, th0 = 1e5, np.radians(30)
     w = mm.mu0 * GAMMA * H / (1 + alpha**2)
-    llg = mm.LLG(macrospin(H), alpha, **llg_args)
+    llg = mm.LLG(macrospin(H, device), alpha, **llg_args)
     m = np.array([np.sin(th0), 0, np.cos(th0)]).reshape(3, 1, 1, 1)
     err = 0.0
     for t in np.linspace(0, t_end, samples + 1)[1:]:
@@ -35,16 +35,16 @@ def period(alpha, H=1e5):
     return 2 * np.pi * (1 + alpha**2) / (mm.mu0 * GAMMA * H)
 
 
-def test_macrospin_matches_analytic():
-    err = macrospin_error(0.1, 3 * period(0.1), 30, tol=1e-8)
+def test_macrospin_matches_analytic(device):
+    err = macrospin_error(0.1, 3 * period(0.1), 30, device, tol=1e-8)
     assert err <= 10 * 1e-8, err
 
 
-def test_fixed_steps_converge_at_fifth_order():
+def test_fixed_steps_converge_at_fifth_order(device):
     # tol = ∞ never rejects and always grows h, so max_step pins every step to h (D20).
     # An adaptive run would hide a wrong Dormand–Prince coefficient by taking smaller steps.
     T = period(0.1)
-    errs = np.array([macrospin_error(0.1, T, 1, tol=np.inf, max_step=T / n) for n in (16, 32, 64)])
+    errs = np.array([macrospin_error(0.1, T, 1, device, tol=np.inf, max_step=T / n) for n in (16, 32, 64)])
     ratios = errs[:-1] / errs[1:]
     assert np.all((26 < ratios) & (ratios < 38)), (errs, ratios)
 
@@ -54,9 +54,9 @@ def total_energy(p, m):
 
 
 @pytest.mark.parametrize("alpha", [0.0, 0.5])
-def test_energy_is_conserved_without_damping_and_falls_with_it(alpha):
+def test_energy_is_conserved_without_damping_and_falls_with_it(alpha, device):
     p = random_problem()
-    prob = mm.Problem(p["grid"], p["Ms"], p["A"], p["K"], p["k"], H_EXT)
+    prob = mm.Problem(p["grid"], p["Ms"], p["A"], p["K"], p["k"], H_EXT, device=device)
     H = np.empty_like(p["m"])
     prob.effective_field(p["m"], H)
     T = 10 * 2 * np.pi / (mm.mu0 * GAMMA * np.abs(H).max())  # ~10 periods of the fastest precession
@@ -76,6 +76,24 @@ def test_energy_is_conserved_without_damping_and_falls_with_it(alpha):
     assert np.abs(np.linalg.norm(m, axis=0) - 1).max() <= 1e-14
 
 
+@pytest.mark.skipif(not mm.has_cuda, reason="CPU-only build")
+def test_fixed_steps_match_cpu():
+    # D26: identical fixed steps on both devices, so the only differences are rounding. Adaptive runs are not compared:
+    # rounding changes the accepted step sequence. The device-parametrised physics tests cover those.
+    p = random_problem()
+    H = np.empty_like(p["m"])
+    mm.Problem(p["grid"], p["Ms"], p["A"], p["K"], p["k"], H_EXT).effective_field(p["m"], H)
+    h = 2 * np.pi / (mm.mu0 * GAMMA * np.abs(H).max()) / 1000  # below the first-step guess, so every step is h
+    out = []
+    for device in ("cpu", "cuda"):
+        prob = mm.Problem(p["grid"], p["Ms"], p["A"], p["K"], p["k"], H_EXT, device=device)
+        m = p["m"].copy()
+        mm.LLG(prob, 0.5, tol=np.inf, max_step=h).run_until(m, 5 * h)
+        out.append(m)
+    assert np.abs(out[0] - p["m"]).max() > 1e-3  # m really moved
+    assert np.abs(out[1] - out[0]).max() <= 1e-12
+
+
 SP4_REF = Path(__file__).parent / "data" / "sp4_field1_oommf.csv"
 
 
@@ -85,13 +103,13 @@ def first_zero_crossing(t, mx):
 
 
 @pytest.mark.slow
-def test_sp4_field1_matches_oommf():
+def test_sp4_field1_matches_oommf(device):
     ref = np.loadtxt(SP4_REF, delimiter=",", skiprows=4)
     t_ref, m_ref = ref[:, 0], ref[:, 1:]
     g = mm.Grid(128, 32, 1, 500e-9 / 128, 125e-9 / 32, 3e-9)
     s = (g.nz, g.ny, g.nx)
     one = np.ones(s)
-    prob = mm.Problem(g, 8e5 * one, 1.3e-11 * one, 0 * one, np.zeros((3, *s)), (0, 0, 0))
+    prob = mm.Problem(g, 8e5 * one, 1.3e-11 * one, 0 * one, np.zeros((3, *s)), (0, 0, 0), device=device)
     gamma = 2.211e5 / mm.mu0  # SP4 specifies µ0γ = 2.211e5 m/(A·s)
 
     # S-state: relax uniform (1,1,1)/√3 at zero field with α = 1 until the largest torque is below 1e-6 Ms.

@@ -1,6 +1,7 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/array.h>
+#include <nanobind/stl/string.h>
 
 #include <array>
 #include <limits>
@@ -50,6 +51,30 @@ static void check_shape(const T& a, const Grid& g, bool vector, const char* name
     if (!ok) throw std::invalid_argument(std::string(name) + " must have shape " + (vector ? "(3, nz, ny, nx)" : "(nz, ny, nx)"));
 }
 
+static Device parse_device(const std::string& name) {
+    if (name == "cpu") return Device::cpu;
+    if (name == "cuda") return Device::cuda;
+    throw std::invalid_argument("device must be \"cpu\" or \"cuda\", not \"" + name + "\"");
+}
+
+static Term parse_term(const std::string& name) {
+    if (name == "exchange") return Term::exchange;
+    if (name == "anisotropy") return Term::anisotropy;
+    if (name == "zeeman") return Term::zeeman;
+    if (name == "demag") return Term::demag;
+    throw std::invalid_argument("term must be exchange, anisotropy, zeeman or demag, not \"" + name + "\"");
+}
+
+// Runs f(m, H) on copies of mag and out in the problem's memory space, then copies H back into out (D24).
+template <class F>
+static void on_device(Problem& p, In mag, Out out, F f) {
+    const size_t N = 3 * p.grid().n();
+    Buffer m(p.backend(), N), H(p.backend(), N);
+    p.backend().to_device(m.data(), mag.data(), N);
+    f(m.data(), H.data());
+    p.backend().to_host(out.data(), H.data(), N);
+}
+
 NB_MODULE(_core, m) {
 #ifdef MICROMAG_CUDA
     m.attr("has_cuda") = true;
@@ -95,18 +120,27 @@ NB_MODULE(_core, m) {
         }, "m"_a.noconvert(), "Ms"_a.noconvert(), "out"_a.noconvert(), "Demagnetizing field (eq. 21), A/m.");
 
     nb::class_<Problem>(m, "Problem")
-        .def("__init__", [](Problem* p, const Grid& g, In Ms, In A, In K, In k, std::array<double, 3> H_ext) {
+        .def("__init__", [](Problem* p, const Grid& g, In Ms, In A, In K, In k, std::array<double, 3> H_ext, const std::string& device) {
             check_shape(Ms, g, false, "Ms"); check_shape(A, g, false, "A"); check_shape(K, g, false, "K"); check_shape(k, g, true, "k");
-            new (p) Problem(g, Ms.data(), A.data(), K.data(), k.data(), H_ext);  // copies the materials (D19)
-        }, "grid"_a, "Ms"_a.noconvert(), "A"_a.noconvert(), "K"_a.noconvert(), "k"_a.noconvert(), "H_ext"_a)
+            new (p) Problem(g, Ms.data(), A.data(), K.data(), k.data(), H_ext, parse_device(device));  // copies the materials (D19)
+        }, "grid"_a, "Ms"_a.noconvert(), "A"_a.noconvert(), "K"_a.noconvert(), "k"_a.noconvert(), "H_ext"_a, "device"_a = "cpu",
+           "device: \"cpu\" or \"cuda\". LLG and Minimizer run on their Problem's device (D24).")
         .def_rw("H_ext", &Problem::H_ext, "External field (A/m).")
+        .def("field", [](Problem& p, const std::string& term, In mag, Out out) {
+            const Term t = parse_term(term);
+            check_shape(mag, p.grid(), true, "m"); check_shape(out, p.grid(), true, "out");
+            on_device(p, mag, out, [&](const double* m, double* H) { p.field(t, m, H); });
+        }, "term"_a, "m"_a.noconvert(), "out"_a.noconvert(), "One field term (exchange, anisotropy, zeeman or demag), A/m.")
         .def("effective_field", [](Problem& p, In mag, Out out) {
             check_shape(mag, p.grid(), true, "m"); check_shape(out, p.grid(), true, "out");
-            p.effective_field(mag.data(), out.data());
+            on_device(p, mag, out, [&](const double* m, double* H) { p.effective_field(m, H); });
         }, "m"_a.noconvert(), "out"_a.noconvert(), "Sum of exchange, anisotropy, Zeeman and demag fields, A/m.")
         .def("energies", [](Problem& p, In mag) {
             check_shape(mag, p.grid(), true, "m");
-            const auto E = p.energies(mag.data());
+            const size_t N = 3 * p.grid().n();
+            Buffer m(p.backend(), N);
+            p.backend().to_device(m.data(), mag.data(), N);
+            const auto E = p.energies(m.data());
             nb::dict d;
             d["exchange"] = E[0]; d["anisotropy"] = E[1]; d["zeeman"] = E[2]; d["demag"] = E[3];
             return d;

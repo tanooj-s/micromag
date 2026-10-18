@@ -16,7 +16,14 @@ Each iteration is done when its check passes and its decisions are logged below.
 
 ## Resume here
 State on 2026-10-17: iterations 1–4 are done on the CPU. Everything is committed and pushed to `origin main`. `uv run pytest` gives 37 passed, 1 skipped (CUDA) and 2 deselected (slow).
-- **2026-10-18:** the user chose to write the CUDA code now and treat the cluster as one optional GPU target among many (D25). The iteration-5 design is D24–D26.
+- **2026-10-18:** the user chose to write the CUDA code now and treat the cluster as one optional GPU target among many (D25). The iteration-5 design is D24–D26. The backend refactor is done and green on the CPU. `src/cuda_backend.cu` is written but **has never been compiled**: Docker Desktop on the laptop did not start.
+- **Next:** (1) compile check, from the repo root once Docker runs:
+  ```
+  docker run --rm -v "$PWD":/src -w /src -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e SKBUILD_CMAKE_DEFINE=MICROMAG_CUDA=ON \
+    nvidia/cuda:12.1.1-devel-ubuntu22.04 bash -c \
+    'apt-get update -qq && apt-get install -y -qq curl >/dev/null && curl -LsSf https://astral.sh/uv/install.sh | sh && . $HOME/.local/bin/env && uv sync'
+  ```
+  (2) on any NVIDIA GPU of sm_70 or newer with CUDA 12: build with `SKBUILD_CMAKE_DEFINE=MICROMAG_CUDA=ON uv sync`, then `uv run pytest -m "" -v`. Record the GPU, then run the CUDA mutation check.
 - **Known test gap:** a wrong embedded-error weight in the LLG integrator makes the error estimate too large, which wastes steps but gives correct results, and no test catches it. A step-count bound on the macrospin run would close the gap. This was offered to the user and not added (iteration 3).
 - **Carried requirement:** the local "parameters in → results out" workflow belongs to iteration 6 (see its roadmap row).
 
@@ -398,13 +405,15 @@ Source: OOMMF 1.2 (Donahue & Porter), 1 nm cells. The trimmed time series is `te
   - Separate Python classes (`mm.cuda.Problem`): every test and `hysteresis` would need two code paths.
   - Device arrays in Python (CuPy, DLPack): a new dependency before anything needs it.
 - **Consequence:** the CPU backend is the oracle for the CUDA one by construction, and the existing physics tests run on the GPU unchanged apart from a `device` parameter. The interface is shaped by exactly the two drivers that use it.
+- **Refinement (2026-10-18, implementation):** `Problem.field(term, m, out)` exposes one term, so the per-term tests (gradient, vacuum, Bloch wall, Aharoni, FFT vs direct sum) reach the GPU. The free functions and `Demag` stay CPU-only: they are the oracle that `CpuBackend` calls. `effective_field` and `energies` moved out of the backends into `Problem`, built from `field`, `lincomb` and `ms_dot`, so their prefactors exist once. The interface has 12 methods (`src/backend.hpp`).
+- **Result:** on the CPU, the refactor reproduces the iteration 3–4 numbers exactly: SP4 crossing 138.6 ps, RMS 0.0051, 1979 steps with 1 rejected; SP3 L = 8.4551 l_ex. `uv run pytest`: 43 passed, 30 skipped (the CUDA cases), 4 deselected (slow). Mutation check on the new CPU path, each bug caught: `lincomb` dropping h on the base path (fifth order, energy, Stoner–Wohlfarth); `effective_field` omitting demag (energy conservation at α = 0 only; SP4 with `-m slow`); the minimizer stepping along the new direction instead of the previous one (Stoner–Wohlfarth); `field("anisotropy")` dispatching to exchange (the oracle comparison).
 
 ### D25: CUDA portability: any sm_70+ GPU, float64, cluster optional (refines D4, D6) (2026-10-18)
 - **Context:** the user expects to run on machines and GPUs beyond the V100 cluster later, and chose not to block iteration 5 on the cluster build. The laptop has no NVIDIA GPU.
 - **Decision:**
   - `CMAKE_CUDA_ARCHITECTURES` stays 70 by default. CMake's `70` embeds both V100 machine code and compute_70 PTX, which the driver JIT-compiles for any newer GPU (T4, A100, RTX, H100) on first load.
   - Precision stays float64 (D9).
-  - The demag tensor and its spectrum are still built on the CPU with the D14/D15 code and uploaded once. Only the per-call convolution runs on the GPU, in cuFFT (batched D2Z/Z2D).
+  - The demag tensor is still built on the CPU with the D14 code and uploaded once. The convolution runs on the GPU in cuFFT (batched D2Z/Z2D).
   - Device-wide sums and maxima use CUB, which ships with the CUDA toolkit.
   - **Local check:** a CUDA build inside an `nvidia/cuda` Docker image. nvcc compiles without a GPU, so compile errors surface on the laptop.
   - **GPU check:** the tests run unchanged on any NVIDIA GPU of sm_70 or newer with CUDA 12. The cluster is one optional target, and so are its numpy fix and the Nsight roofline numbers.
@@ -413,6 +422,8 @@ Source: OOMMF 1.2 (Donahue & Porter), 1 nm cells. The trimmed time series is `te
   - `native`: fails on GPU-less build hosts (login nodes, Docker).
   - A float32 or mixed-precision path: no second precision is needed yet (D9).
   - Fixing the cluster first: the earlier recommendation, declined by the user.
+- **Correction (2026-10-18, implementation):** the design said the kernel *spectrum* would be built on the CPU and uploaded. Instead the tensor is uploaded and transformed by cuFFT with the same plan layout as M. cuFFT plans leave out length-1 axes, so on a thin film the halved axis is y, not x, and a pocketfft spectrum would not match cuFFT's layout. A 1×1×1 grid has no axis to transform and multiplies by N(0) directly.
+- **Implementation note:** the CUDA sources build as their own static library (`micromag_cuda`, linking `CUDA::cudart_static` and `CUDA::cufft`), so nanobind's host compiler flags never reach nvcc.
 - **Consequence:** the build is portable without per-machine flags. **Known limit:** consumer RTX cards run FP64 at 1/32 to 1/64 of their FP32 rate, compared with 1/2 on V100 and A100, so they will be slow. GPU tests cannot go red against stubs, and the mutation check cannot run, until a GPU machine is used. Iteration 5 stays unchecked until then.
 
 ### D26: Iteration-5 checks (2026-10-18)

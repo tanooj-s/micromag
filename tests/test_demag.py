@@ -24,6 +24,17 @@ def dipole(r, V):
     return -(3 * np.outer(r, r) / R**2 - np.eye(3)) * V / (4 * np.pi * R**3)
 
 
+def demag_field(g, m, Ms, device):
+    """Demag alone: on "cpu" through Demag (the oracle), otherwise through Problem.field with the other terms off (D24)."""
+    H = np.empty_like(m)
+    if device == "cpu":
+        mm.Demag(g).field(m, Ms, H)
+    else:
+        zero = np.zeros_like(Ms)
+        mm.Problem(g, Ms, zero, zero, np.zeros_like(m), (0, 0, 0), device=device).field("demag", m, H)
+    return H
+
+
 def aharoni_z(a, b, c):
     """Demag factor along z of a uniformly magnetised prism with half-sides a, b, c (Aharoni, JAP 83, 3432 (1998))."""
     r = math.sqrt(a * a + b * b + c * c)
@@ -48,16 +59,15 @@ def aharoni_z(a, b, c):
     [((8, 8, 8), (1, 1, 1)), ((1, 1, 1), (1, 2, 3)), ((32, 32, 1), (1, 1, 1))],
     ids=["cube", "single-1:2:3-cell", "thin-film"],
 )
-def test_uniform_prism_matches_aharoni(n, d):
+def test_uniform_prism_matches_aharoni(n, d, device):
     g = mm.Grid(*n, *(1e-9 * np.array(d)))
     half = [ni * di / 2 for ni, di in zip(n, d)]
     expected = [aharoni_z(half[1], half[2], half[0]), aharoni_z(half[2], half[0], half[1]), aharoni_z(*half)]
-    demag, Ms = mm.Demag(g), np.full((g.nz, g.ny, g.nx), 8e5)
+    Ms = np.full((g.nz, g.ny, g.nx), 8e5)
     for a in range(3):
         m = np.zeros((3, g.nz, g.ny, g.nx))
         m[a] = 1.0
-        H = np.empty_like(m)
-        demag.field(m, Ms, H)
+        H = demag_field(g, m, Ms, device)
         assert np.isclose(-H[a].mean() / 8e5, expected[a], rtol=1e-10, atol=0)
         for b in set(range(3)) - {a}:  # a symmetric prism has no off-diagonal body tensor
             assert abs(H[b].mean()) <= 1e-12 * 8e5
@@ -135,7 +145,7 @@ def test_tensor_matches_mpmath(d, u):
 
 
 @pytest.mark.parametrize("n", [(5, 4, 3), (6, 5, 1)], ids=["odd-3d", "single-layer"])
-def test_fft_matches_direct_sum(n):
+def test_fft_matches_direct_sum(n, device):
     rng = np.random.default_rng(1)
     g = mm.Grid(*n, 2e-9, 3e-9, 4e-9)
     s = (g.nz, g.ny, g.nx)
@@ -150,6 +160,5 @@ def test_fft_matches_direct_sum(n):
     direct[:, Ms == 0] = 0.0
     assert np.linalg.norm(direct) > 0  # an all-zero field would otherwise pass trivially
 
-    H = np.empty_like(m)
-    mm.Demag(g).field(m, Ms, H)
+    H = demag_field(g, m, Ms, device)
     assert np.linalg.norm(H - direct) <= 1e-12 * np.linalg.norm(direct)
