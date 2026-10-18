@@ -16,8 +16,9 @@ Each iteration is done when its check passes and its decisions are logged below.
 
 ## Resume here
 State on 2026-10-17: iterations 1–4 are done on the CPU. Everything is committed and pushed to `origin main`. `uv run pytest` gives 37 passed, 1 skipped (CUDA) and 2 deselected (slow).
-- **2026-10-18:** the user chose to write the CUDA code now and treat the cluster as one optional GPU target among many (D25). The iteration-5 design is D24–D26. The backend refactor is done and green on the CPU. `src/cuda_backend.cu` is written but **has never been compiled**: Docker Desktop on the laptop did not start.
-- **Next:** (1) compile check, from the repo root once Docker runs:
+- **2026-10-18:** the user chose to write the CUDA code now and treat the cluster as one optional GPU target among many (D25). The iteration-5 design is D24–D26. The backend refactor is done and green on the CPU. `src/cuda_backend.cu` is written but has never run on a GPU.
+- **Compile check passed (2026-10-18):** the laptop's Docker Desktop was an Intel 4.3.0 build that refuses to start on Apple Silicon; the user reinstalled it (arm64, 4.95.0). In `nvidia/cuda:12.1.1-devel-ubuntu22.04` (aarch64 host, GCC 11.4, nvcc 12.1.105, sm_70), the CUDA build compiles and links with no warnings, and imports with `has_cuda = True`. Without a GPU, the CPU tests pass (42 passed); `test_fixed_steps_match_cpu` and `device="cuda"` fail cleanly with `RuntimeError: CUDA: CUDA driver version is insufficient for CUDA runtime version`, which is expected with no driver.
+- **Next:** (1) compile check (passed, rerun after CUDA changes), from the repo root:
   ```
   docker run --rm -v "$PWD":/src -w /src -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e SKBUILD_CMAKE_DEFINE=MICROMAG_CUDA=ON \
     nvidia/cuda:12.1.1-devel-ubuntu22.04 bash -c \
