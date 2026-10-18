@@ -9,8 +9,20 @@ This is a from-scratch finite-difference micromagnetic solver, modelled on the m
 - This is a teaching project, and the user is the learner, so explain the *why* in plain language.
 - **Before each design decision:** say what the decision is, give the realistic options, and recommend one. Let the user choose before you implement.
 - **After each iteration:** give a short walkthrough of what was built and how the pieces connect.
+- **When a measurement contradicts an agreed decision:** stop, show the data, and put the choice back to the user. When published data proves an assumption wrong, fix it and log a **Correction** line under the decision.
 - **While the user is running commands** (e.g. on the cluster): keep replies short, with just the fix and the next command.
 - **Cluster environment problems:** don't block the local work on them. Log them as open issues in NOTES.md and keep going.
+
+## Iteration workflow
+Iterations 1–4 followed these steps, and the user expects them each time:
+1. Read the iteration's row in the NOTES.md roadmap. Explain the physics in plain terms.
+2. Settle the design in rounds of numbered questions, each with a recommended answer (the `grilling` skill). Look up facts yourself, e.g. benchmark data from the µMAG site. End with a one-paragraph summary, and wait for the user to confirm it.
+3. Write decision-log entries and the reworded roadmap check to NOTES.md, and commit the design on its own.
+4. Write the tests, then run them against stub implementations. Every test must go **red** for a real reason. A test that passes on an all-zero or do-nothing stub needs a guard (e.g. `assert norm(expected) > 0`).
+5. Implement until green.
+6. Run a **mutation check**: plant 3–4 realistic bugs one at a time, record which tests catch each, and restore the source. Keep backups in the scratchpad. Do not rebuild while another `uv run` is still using the extension.
+7. Record measured numbers in NOTES.md: **Result** lines under the decision, and published comparisons in **Reference benchmarks**. Mark the roadmap row ✅.
+8. Show the test output, give the walkthrough, and ask before committing the code. After the commit, push to `origin main`.
 
 ## Stack
 - C++ core, built with CMake. CUDA and cuFFT for the GPU path.
@@ -19,7 +31,7 @@ This is a from-scratch finite-difference micromagnetic solver, modelled on the m
 
 ## Commands
 The build uses uv with scikit-build-core and nanobind. `uv run` rebuilds the C++ automatically when `src/`, `CMakeLists.txt` or `pyproject.toml` change.
-- **Test (laptop, CPU):** `uv run pytest`. On this Mac, `/usr/local/bin/cmake` is an x86_64 binary, so export `ARCHFLAGS="-arch arm64"`, or the extension builds for the wrong architecture.
+- **Test (laptop, CPU):** `uv run pytest`. The benchmark runs (µMAG SP3 and SP4, about 30 s in total) are marked `slow` and excluded by default. Run them with `uv run pytest -m slow -s`, which prints the comparison numbers. On this Mac, `/usr/local/bin/cmake` is an x86_64 binary, so export `ARCHFLAGS="-arch arm64"`, or the extension builds for the wrong architecture.
 - **Cluster storage:** the home directory quota is small, so the uv cache and Python installs go on scratch. These lines are in `~/.bashrc` on the cluster:
   ```
   export UV_CACHE_DIR=/gpfs/u/scratch/TMGN/TMGNtjsh/.cache/uv

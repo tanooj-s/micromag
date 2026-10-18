@@ -10,9 +10,15 @@ Each iteration is done when its check passes and its decisions are logged below.
 | 2 | Demag: Newell tensor, direct O(N²) oracle, zero-padded FFT (eqs. 17–21) | Uniform prisms (cube, 1:2:3 cell, 32×32×1 film) match Aharoni's closed form to 1e-10; far-field tensor → point dipole with error ~4× smaller per doubling of distance; FFT and direct sum agree to 1e-12 (D17) | ✅ CPU (`tests/test_demag.py`) |
 | 3 | LLG (eq. 25) with a self-written adaptive Dormand–Prince RK45 | Macrospin matches the analytic solution; fixed-step error falls ~32× per halving of h (5th order); energy conserved at α = 0 and non-increasing at α > 0; µMAG SP4 field 1: first ⟨mx⟩ = 0 crossing within 3% of OOMMF and RMS ⟨m⟩ difference ≤ 0.05 over 0–1 ns (D20) | ✅ CPU (`tests/test_llg.py`; SP4 with `-m slow`) |
 | 4 | Minimizer: projected steepest descent with Barzilai–Borwein steps (eqs. 22–23), plus a hysteresis driver | Stoner–Wohlfarth astroid: switching fields at ψ = 15–75° within 2·10⁻³ H_K of `(cos^{2/3}ψ + sin^{2/3}ψ)^{−3/2}`; µMAG SP3 (20³): flower/vortex crossover L within 0.5% of 8.47 l_ex (D23) | ✅ CPU (`tests/test_minimizer.py`; SP3 with `-m slow`) |
-| 5 | GPU backend: CUDA kernels + cuFFT; the backend interface is introduced here | GPU matches CPU on every test; Nsight roofline numbers recorded | todo |
+| 5 | GPU backend: CUDA kernels + cuFFT; the backend interface is introduced here | GPU matches CPU on every test; Nsight roofline numbers recorded | **next**, paused by the user on 2026-10-17. See "Resume here". |
 | 6 | Cluster science: Slurm job-array sweeps, output with provenance (git hash and parameters), scaling study. **Requirement (user, 2026-10-17):** a simple local workflow, parameters in → results out, that runs one simulation on the laptop CPU from an input file or CLI and writes its outputs, without hand-editing a Python script. The cluster sweeps should use the same entry point. | Coercivity vs cube size compared with paper Fig. 8a; one local run from an input file reproduces SP4 | todo |
 | 7 | Stretch, pick one: Voronoi grains / string method (NEB) / multi-GPU / thermal field | — | — |
+
+## Resume here
+State on 2026-10-17: iterations 1–4 are done on the CPU. Everything is committed and pushed to `origin main`. `uv run pytest` gives 37 passed, 1 skipped (CUDA) and 2 deselected (slow). The user paused before iteration 5.
+- **First question when resuming iteration 5:** fix the cluster build first (the open issue below), or write the CUDA code blind and test it once the cluster works. GPU code can only be tested on the cluster.
+- **Known test gap:** a wrong embedded-error weight in the LLG integrator makes the error estimate too large, which wastes steps but gives correct results, and no test catches it. A step-count bound on the macrospin run would close the gap. This was offered to the user and not added (iteration 3).
+- **Carried requirement:** the local "parameters in → results out" workflow belongs to iteration 6 (see its roadmap row).
 
 ## Cluster environment
 - **GPU nodes:** 8× Tesla V100-SXM2-32GB per node (sm_70). The driver is 535.104 and supports CUDA ≤ 12.2.
