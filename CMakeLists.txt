@@ -6,11 +6,18 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # Must come before any target is created: targets copy CMAKE_CUDA_ARCHITECTURES at creation time.
+# D25: V100 (70) where the toolkit supports it; CUDA 13 dropped Volta, so there the oldest it has, 75 (T4).
+# The PTX embedded with either runs on any newer GPU. Override with -DCMAKE_CUDA_ARCHITECTURES=... or CUDAARCHS.
 if(MICROMAG_CUDA)
-  if(NOT DEFINED CMAKE_CUDA_ARCHITECTURES)
-    set(CMAKE_CUDA_ARCHITECTURES 70)  # V100; override with -DCMAKE_CUDA_ARCHITECTURES=... on other GPUs
-  endif()
+  set(user_archs "${CMAKE_CUDA_ARCHITECTURES}$ENV{CUDAARCHS}")  # read before enable_language fills in its own default
   enable_language(CUDA)
+  if(NOT user_archs)
+    if(CMAKE_CUDA_COMPILER_VERSION VERSION_GREATER_EQUAL 13)
+      set(CMAKE_CUDA_ARCHITECTURES 75)
+    else()
+      set(CMAKE_CUDA_ARCHITECTURES 70)
+    endif()
+  endif()
 endif()
 
 find_package(Python 3.10 REQUIRED COMPONENTS Interpreter Development.Module)
