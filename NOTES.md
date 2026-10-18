@@ -7,7 +7,7 @@ Each iteration is done when its check passes and its decisions are logged below.
 |---|-----------|-------|--------|
 | 0 | Toolchain: CMake + bindings + pytest + one CUDA kernel, run on a laptop and on a cluster GPU node through Slurm | Kernel test passes in both places | laptop ✅ · cluster blocked (see below) |
 | 1 | Grid, per-cell materials, exchange / anisotropy / Zeeman (eqs. 8, 9, 11), CPU | Energies of uniform states; H matches the finite-difference gradient of E; analytic 1D Bloch wall (width π√(A/K)) is in equilibrium (torque → 0) with σ → 4√(AK), both errors falling ~4× per halving of dx (D13) | ✅ CPU (`tests/test_fields.py`) |
-| 2 | Demag: Newell tensor, direct O(N²) oracle, zero-padded FFT (eqs. 17–21) | Cube: trace N = 1, Nxx = 1/3; thin film: Nzz → 1; FFT and direct agree to ~1e-12 | todo |
+| 2 | Demag: Newell tensor, direct O(N²) oracle, zero-padded FFT (eqs. 17–21) | Uniform prisms (cube, 1:2:3 cell, 32×32×1 film) match Aharoni's closed form to 1e-10; far-field tensor → point dipole with error ~4× smaller per doubling of distance; FFT and direct sum agree to 1e-12 (D17) | **in progress:** design settled (D14–D17), implementing test-first |
 | 3 | LLG (eq. 25) with a self-written adaptive Dormand–Prince RK45 | Macrospin matches the analytic solution; µMAG SP4 within a few % | todo |
 | 4 | Minimizer: projected steepest descent with Barzilai–Borwein steps (eqs. 22–23), plus a hysteresis driver | Stoner–Wohlfarth astroid; µMAG SP2 or SP3 | todo |
 | 5 | GPU backend: CUDA kernels + cuFFT; the backend interface is introduced here | GPU matches CPU on every test; Nsight roofline numbers recorded | todo |
@@ -180,3 +180,49 @@ Each iteration is done when its check passes and its decisions are logged below.
   - Deferring the width check to iteration 4: iteration 1 would then have no physics check.
   - A fixed tolerance alone: a small constant-error bug could hide under it, but it cannot fake second-order convergence.
 - **Consequence:** the check verifies the discretisation order, not just a number. The roadmap check text was reworded to match.
+
+### D14: Demag tensor: Newell near, Gauss-averaged dipole far, mirrored from one octant (2026-10-17)
+- **Context:** the Newell formula (Newell, Williams & Dunlop 1993) sums 27 large terms that nearly cancel. Measured against mpmath at 50 digits, its error in double grows like ε·r⁶: 2e-10 at 10 cells, 8e-7 at 30, 7e-3 at 127. A plain point dipole is only accurate to O(1/r²) for non-cubic cells (4e-3 at 10 cells for 1:1.5:2).
+- **Decision:**
+  - Newell f/g formulas for offsets below 20 cells, measured as √(i² + j² + k²) in cell counts.
+  - Beyond that, the dipole kernel averaged over 3-point Gauss–Legendre nodes per axis in both cells. The nodes are symmetric, so the 27×27 pairs collapse to 5 distinct differences per axis, i.e. 125 kernel evaluations per offset.
+  - Target accuracy: 1e-6 relative to the largest entry at that offset. Measured at the cutoff, the worst cases are about 4e-8 (cubic), 3e-7 (1:1.5:2) and 7e-7 (1:1:0.25).
+  - Compute one octant of offsets and mirror it. Diagonal components are even in each offset coordinate, and Nxy is odd in x and y. Nyy, Nzz, Nxz and Nyz come from the same f and g by permuting axes.
+  - `demag_tensor(grid)` returns `(6, Pz, Py, Px)` (xx, yy, zz, xy, xz, yz) in FFT wraparound order, so a negative index is a negative offset. Index n of a padded axis is unused and holds 0.
+- **Alternatives:**
+  - Newell everywhere: about 2 digits left at 127 cells.
+  - Point dipole far: cannot reach better than about 1e-3 for non-cubic cells at reasonable cutoffs.
+  - More Gauss points (4–5 per axis) to keep 1e-8: slower setup, and flat cells still need more.
+  - OOMMF's higher-order asymptotic expansion (Donahue): most accurate and fast, but a lot of formula. A stretch goal if a test ever needs better than 1e-6.
+- **Consequence:** the tensor is good to about 1e-6, far below the O(dx²) discretisation error (about 1e-3). **Known limit:** cells flatter than about 1:4 are untested and may exceed 1e-6 at the cutoff.
+
+### D15: FFT convolution: pocketfft, 2n zero padding, real-to-complex (2026-10-17)
+- **Context:** eq. 21 is a convolution, because N depends only on the offset between cells. The CPU path is the oracle; cuFFT is the production path.
+- **Decision:**
+  - pocketfft (the C++ header-only version, BSD-3), fetched with CMake FetchContent at a pinned commit and run single-threaded.
+  - Pad each axis to 2n; an axis with n = 1 stays at 1.
+  - Real-to-complex transforms for M = Ms·m and N. The kernel spectrum is computed once.
+- **Alternatives:**
+  - FFTW: faster, but GPL, and it needs a system install on every machine.
+  - numpy FFT: unusable from the C++ LLG integrator.
+  - 2n−1 padding: can be a prime length, which is slow to transform.
+  - complex-to-complex: about 2× the work and memory.
+  - Multithreading: needs OpenMP and gives results that are not reproducible run to run, for an oracle.
+- **Consequence:** identical builds on the laptop and the cluster. The real-to-complex layout maps one-to-one onto cuFFT D2Z/Z2D in iteration 5.
+
+### D16: `Demag(grid)` owns its workspace (refines D9) (2026-10-17)
+- **Context:** demag is the first term that does expensive work once (the tensor and its spectrum) and reuses it on every call.
+- **Decision:** a C++ class `Demag(grid)` holds the kernel spectrum and the padded scratch buffers. `demag.field(m, Ms, out)` keeps the D10 conventions: it overwrites `out`, sets H = 0 in vacuum, rejects mismatched arrays, and uses energy prefactor c = ½. numpy still owns everything that crosses the API; objects own their internal workspace.
+- **Alternatives:** a free function that rebuilds the kernel on every call, which defeats the FFT. A global cache, which is forbidden by CLAUDE.md.
+- **Consequence:** the GPU version (iteration 5) can keep the spectrum resident on the device behind the same method.
+
+### D17: Iteration-2 oracles and check (2026-10-17)
+- **Context:** the FFT path and any direct sum share the tensor, so comparing them alone cannot catch a wrong tensor.
+- **Decision:**
+  - **Aharoni (1998):** the closed-form demag factors of a rectangular prism. Uniformly magnetise a prism of cells, run `Demag.field`, and require −⟨H_a⟩/Ms to match to 1e-10. Cases: an 8³ cube, a single 1:2:3 cell (the self-term, trace 1), and a 32×32×1 film. This replaces the roadmap's loose "Nzz → 1".
+  - **Point-dipole limit:** with 1:1.5:2 cells (for cubic cells the error falls like 1/r⁴, not 1/r²), Newell's error relative to the point dipole falls about 4× from offset (10,7,3) to (20,14,6). This is the only check on the sign and magnitude of the off-diagonal components.
+  - **mpmath:** the same f and g formulas at 50 digits. The tensor must match to 1e-6 at offsets up to 127 cells, for cubic, 1:1.5:2 and 1:1:0.25 cells.
+  - **Direct sum in numpy (tests only):** must match the FFT path to 1e-12 (on the norm), with odd sizes, vacuum, non-cubic cells and nz = 1.
+  - Demag joins the iteration 1 gradient, vacuum and rejection tests. The gradient test proves N_ij = N_jiᵀ, which checks the mirroring.
+- **Alternatives:** the roadmap's original "trace = 1, Nxx = 1/3, Nzz → 1", which is weaker and does not test the off-diagonal components.
+- **Consequence:** mpmath becomes a dev dependency. The roadmap check was reworded to match.
