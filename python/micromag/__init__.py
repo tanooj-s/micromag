@@ -2,7 +2,7 @@ import numpy as np
 
 from ._core import LLG, Demag, Grid, Minimizer, Problem, anisotropy_field, demag_tensor, exchange_field, has_cuda, mu0, scale, zeeman_field
 
-__all__ = ["LLG", "Demag", "Grid", "Minimizer", "Problem", "anisotropy_field", "demag_tensor", "energy", "exchange_field", "has_cuda", "hysteresis", "mu0", "scale", "zeeman_field"]
+__all__ = ["LLG", "Demag", "Grid", "Minimizer", "Problem", "anisotropy_field", "demag_tensor", "energy", "exchange_field", "has_cuda", "hysteresis", "mu0", "run", "scale", "zeeman_field"]
 
 
 def energy(grid, m, Ms, H, c):
@@ -34,3 +34,6 @@ def hysteresis(problem, m, fields, minimizer):
         **{term: np.array([E[term] for E in energies]) for term in energies[0]},
         "iterations": np.array(iterations),
     }
+
+
+from .run import run  # noqa: E402  (last: run.py imports the names above)

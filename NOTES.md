@@ -11,13 +11,14 @@ Each iteration is done when its check passes and its decisions are logged below.
 | 3 | LLG (eq. 25) with a self-written adaptive Dormand–Prince RK45 | Macrospin matches the analytic solution; fixed-step error falls ~32× per halving of h (5th order); energy conserved at α = 0 and non-increasing at α > 0; µMAG SP4 field 1: first ⟨mx⟩ = 0 crossing within 3% of OOMMF and RMS ⟨m⟩ difference ≤ 0.05 over 0–1 ns (D20) | ✅ CPU (`tests/test_llg.py`; SP4 with `-m slow`) |
 | 4 | Minimizer: projected steepest descent with Barzilai–Borwein steps (eqs. 22–23), plus a hysteresis driver | Stoner–Wohlfarth astroid: switching fields at ψ = 15–75° within 2·10⁻³ H_K of `(cos^{2/3}ψ + sin^{2/3}ψ)^{−3/2}`; µMAG SP3 (20³): flower/vortex crossover L within 0.5% of 8.47 l_ex (D23) | ✅ CPU (`tests/test_minimizer.py`; SP3 with `-m slow`) |
 | 5 | GPU backend: CUDA kernels + cuFFT; the backend interface is introduced here | Every test passes with `device="cuda"` and the direct CPU-vs-GPU comparisons hold their D26 tolerances, run on at least one CUDA GPU of sm_70 or newer (which GPU is recorded). Nsight roofline numbers are optional (D25) | ✅ CPU + GPU (Tesla T4, CUDA 13.0, Colab, 2026-10-18; D26 Result) |
-| 6a | Workflow: one simulation from a TOML input card into a results folder (per-stage CSV thermo tables, an HDF5 dump of magnetic states, provenance) through `micromag run` and `micromag.run()` (D27, D28). **Requirement (user, 2026-10-17):** a simple local workflow, parameters in → results out, from an input file, without hand-editing a Python script, with the same entry point on any machine | `examples/sp4.toml` run through `run()` meets D20's SP4 criteria; fast tests of validation, the results folder, restarts, dumps and failure handling (D29) | **in progress**: design settled 2026-10-18 |
+| 6a | Workflow: one simulation from a TOML input card into a results folder (per-stage CSV thermo tables, an HDF5 dump of magnetic states, provenance) through `micromag run` and `micromag.run()` (D27, D28). **Requirement (user, 2026-10-17):** a simple local workflow, parameters in → results out, from an input file, without hand-editing a Python script, with the same entry point on any machine | `examples/sp4.toml` run through `run()` meets D20's SP4 criteria; fast tests of validation, the results folder, restarts, dumps and failure handling (D29) | ✅ (`tests/test_card.py`, `tests/test_run.py`; SP4 card with `-m slow`) |
 | 6b | Science runs: sweeps over cards (a local loop; Slurm job arrays optional), material regions (core–shell), the Fig. 8a cube on a GPU; scaling study and Nsight optional (D25) | Coercivity vs cube size compared with paper Fig. 8a (tolerance set in the 6b design) | todo |
 | 7 | Stretch, pick one: Voronoi grains / string method (NEB) / multi-GPU / thermal field | — | — |
 
 ## Resume here
 State on 2026-10-18: iterations 1–5 are done. Iteration 5 passes on a Tesla T4 (Colab, CUDA 13.0; D26 Result). `uv run pytest` on the laptop gives 43 passed, 30 skipped (the CUDA cases) and 4 deselected (slow).
-- **Next:** iteration 6a (design D27–D29, settled 2026-10-18; iteration 6 was split into 6a and 6b the same day). The cluster remains an optional GPU target (D25); its build needs the numpy cap (see the optional open issue below).
+- **2026-10-18:** iteration 6 was split into 6a and 6b; 6a is done (D27–D29). Run a card with `uv run micromag run examples/sp4.toml -o runs/sp4` (`runs/` is git-ignored).
+- **Next:** iteration 6b design. The cluster remains an optional GPU target (D25); its build needs the numpy cap (see the optional open issue below).
 - **CUDA compile check without a GPU** (rerun after CUDA changes), from the repo root, with Docker Desktop for Apple Silicon:
   ```
   docker run --rm -v "$PWD":/src -w /src -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e SKBUILD_CMAKE_DEFINE=MICROMAG_CUDA=ON \
@@ -513,6 +514,11 @@ Source: OOMMF 1.2 (Donahue & Porter), 1 nm cells. The trimmed time series is `te
   - A single `thermo.csv` with a stage column: blank cells, and rows to filter.
   - A default output folder with a timestamp: fills up with unnamed runs.
   - Refusing to run on a dirty tree: blocks everyday work.
+- **Refinement (2026-10-18, implementation):**
+  - A restart checks that the cell counts `n` match. The cell size may differ, so a state can be rescaled onto another cell size, as SP3's bisection does.
+  - The hysteresis stage runs its own loop in `run.py` rather than calling `mm.hysteresis`, so each row is written and flushed as it happens. `mm.hysteresis` stays as the in-memory API.
+  - Floats are written to the CSV with `repr`, so a value read back is exactly the value computed.
+  - `git_state` counts untracked files as dirty, but `git diff HEAD` does not include them.
 - **Consequence:** h5py becomes a dependency. Its Linux wheels need glibc ≥ 2.28, so the optional cluster build needs a cap, like numpy. 6b's sweeps write one such folder per run.
 
 ### D29: Iteration-6a checks (2026-10-18)
@@ -530,3 +536,12 @@ Source: OOMMF 1.2 (Donahue & Porter), 1 nm cells. The trimmed time series is `te
       - the `--device` override through the CLI
       - failure handling: the `failed` state, the status, and the exit code
 - **Consequence:** the roadmap row for 6a states this check.
+- **Result (2026-10-18):**
+  - `uv run pytest`: 67 passed, 30 skipped (CUDA), 5 deselected (slow). The 24 new workflow tests take 0.6 s.
+  - `examples/sp4.toml` through `run()` reproduces the direct test exactly: S-state ⟨m⟩ = (0.9670, 0.1253, 0.0000) after 2.80 ns, crossing at 138.6 ps, RMS 0.0051, 1979 steps with 1 rejected, 25 s on the laptop CPU.
+  - Through the command line, the results folder holds `card.toml`, `provenance.json`, `git.diff` (the tree was dirty), two thermo CSVs (10 kB and 194 kB) and a 281 kB `magnetic_states.h5`. A second run into the same folder exits with code 2 and writes nothing.
+- **Mutation check:** each bug was planted alone, and each was caught.
+  - The field carried over unless a stage set a non-zero one: caught by the Zeeman-energy check in the thermo test, which compares the energy against the recorded field.
+  - `tol` checked against `until_torque` instead of `until_torque/100`: caught by the validation test.
+  - The dump schedule starting at the first interval instead of t = 0: caught by the dump and thermo tests.
+  - A restart reading a stage's first snapshot instead of its last: caught by the restart test.

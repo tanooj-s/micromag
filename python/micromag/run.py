@@ -1,0 +1,284 @@
+"""Run one card into a results folder (D28): parameters in, results out.
+
+    micromag run CARD -o DIR [--device cuda]
+
+The folder holds the card, provenance.json, one macrostate table per stage (stage<k>_<type>.csv, like LAMMPS thermo
+output) and the microstates in magnetic_states.h5 (like a LAMMPS dump). See D27 for the card and D28 for the folder.
+"""
+
+import argparse
+import csv
+import hashlib
+import json
+import platform
+import subprocess
+import sys
+import time
+from datetime import datetime, timezone
+from importlib.metadata import version
+from pathlib import Path
+
+import h5py
+import numpy as np
+
+from . import LLG, Grid, Minimizer, Problem, mu0
+from .card import CardError, Hysteresis, LLGDynamics, Minimize, load
+
+ENERGIES = ("exchange", "anisotropy", "zeeman", "demag")
+COLUMNS = {
+    "llg-dynamics": ["t", "mu0_Hx", "mu0_Hy", "mu0_Hz", "mx", "my", "mz",
+                     *(f"E_{e}" for e in ENERGIES), "E_total", "steps", "rejected"],
+    "minimize": ["mu0_Hx", "mu0_Hy", "mu0_Hz", "mx", "my", "mz", *(f"E_{e}" for e in ENERGIES), "E_total", "iterations"],
+}
+COLUMNS["hysteresis"] = COLUMNS["minimize"]
+
+
+def git_state(path):
+    """{hash, dirty, diff} of the git checkout containing path, or None outside one. Untracked files count as dirty."""
+    def git(*args):
+        return subprocess.run(["git", "-C", str(path), *args], capture_output=True, text=True, check=True).stdout
+    try:
+        return {"hash": git("rev-parse", "HEAD").strip(), "dirty": bool(git("status", "--porcelain").strip()),
+                "diff": git("diff", "HEAD")}
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def _now():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _gpu_name():
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"], capture_output=True, text=True, check=True)
+        return out.stdout.splitlines()[0].strip()
+    except (OSError, subprocess.CalledProcessError, IndexError):
+        return None
+
+
+def _initial_state(card):
+    """m to start from (3, nz, ny, nx), and its provenance entry. Raises CardError before anything is written."""
+    nx, ny, nz = card.n
+    if card.m0 is not None:
+        return np.ascontiguousarray(np.broadcast_to(card.m0[:, None, None, None], (3, nz, ny, nx))), {"m": card.m0.tolist()}
+    try:
+        f = h5py.File(card.file, "r")
+    except OSError as e:
+        raise CardError(f"[initial]: cannot read {card.file}: {e}") from None
+    with f:
+        if tuple(int(x) for x in f.attrs["n"]) != card.n:
+            raise CardError(f"[initial]: {card.file} has grid n = {list(f.attrs['n'])}, but the card has {list(card.n)}")
+        if card.state not in f:
+            raise CardError(f"[initial]: {card.file} has no state '{card.state}' (it has: {', '.join(f)})")
+        d = f[card.state]["m"]
+        m = np.array(d[()] if d.ndim == 4 else d[-1], dtype=np.float64)  # final/failed: one state; stage<k>: its last snapshot
+    sha = hashlib.sha256(Path(card.file).read_bytes()).hexdigest()
+    return m, {"file": str(card.file), "state": card.state, "sha256": sha}
+
+
+class Macrostate:
+    """One stage's table of ⟨m⟩, energies and solver effort, flushed row by row so `tail -f` works (D28)."""
+
+    def __init__(self, path, columns):
+        self.file = open(path, "w", newline="")
+        self.writer = csv.writer(self.file)
+        self.writer.writerow(columns)
+        self.file.flush()
+
+    def row(self, values):
+        self.writer.writerow([repr(float(v)) if isinstance(v, (float, np.floating)) else v for v in values])  # exact floats
+        self.file.flush()
+
+    def close(self):
+        self.file.close()
+
+
+class Microstate:
+    """magnetic_states.h5, the full m: per stage an extendable stack of m with its times or fields; float64, shuffle + gzip (D28)."""
+
+    def __init__(self, path, card):
+        self.f = h5py.File(path, "w")
+        self.shape = (3, card.n[2], card.n[1], card.n[0])
+        self.f.attrs.update(n=list(card.n), cell=list(card.cell), cell_units="m", t_units="s", mu0_H_units="T",
+                            m_layout="m[snapshot, component, z, y, x], x fastest; unit vectors")
+
+    def stage(self, k, kind):
+        g = self.f.create_group(f"stage{k}")
+        g.attrs["type"] = kind
+        g.create_dataset("m", shape=(0, *self.shape), maxshape=(None, *self.shape), chunks=(1, *self.shape),
+                         dtype="f8", compression="gzip", shuffle=True)
+        if kind == "llg-dynamics":
+            g.create_dataset("t", shape=(0,), maxshape=(None,), dtype="f8")
+        else:
+            g.create_dataset("mu0_H", shape=(0, 3), maxshape=(None, 3), dtype="f8")
+        return g
+
+    def append(self, g, m, label):
+        name = "t" if "t" in g else "mu0_H"
+        for ds, value in ((g["m"], m), (g[name], label)):
+            ds.resize(ds.shape[0] + 1, axis=0)
+            ds[-1] = value
+        self.f.flush()
+
+    def single(self, name, m):
+        self.f.create_group(name).create_dataset("m", data=m, compression="gzip", shuffle=True)
+        self.f.flush()
+
+    def close(self):
+        self.f.close()
+
+
+def _schedule(end, rows_every, dump_every):
+    """[(t, row, dump)] in time order: rows at 0, every rows_every and at end; dumps every dump_every from 0, and at end."""
+    marks = [(0.0, True, False), (end, True, True)]
+    for every, is_row in ((rows_every, True), (dump_every, False)):
+        if every is not None:
+            marks += [(j * every, is_row, not is_row) for j in range(int(end / every * (1 + 1e-12)) + 1)]
+    marks.sort()
+    tol = 1e-9 * min(x for x in (rows_every, dump_every, end) if x is not None)
+    out = []
+    for t, row, dump in marks:  # k·a and j·b can differ by rounding where they should coincide
+        if out and t - out[-1][0] <= tol:
+            out[-1] = (t, out[-1][1] or row, out[-1][2] or dump)
+        else:
+            out.append((t, row, dump))
+    return [(min(t, end), row, dump) for t, row, dump in out]
+
+
+def run(card, out, device=None):
+    """Runs a card into the folder out, which must be new or empty. device overrides the card's (D28).
+
+    Raises CardError for a bad card or initial state, FileExistsError for a non-empty out, and re-raises a stage's
+    error after recording it, keeping everything written so far."""
+    card = load(card)
+    m, initial = _initial_state(card)
+    out = Path(out)
+    if out.exists() and any(out.iterdir()):
+        raise FileExistsError(f"{out} is not empty: refusing to overwrite a result (D28)")
+    device = device or card.device
+
+    nx, ny, nz = card.n
+    s = (nz, ny, nx)
+    one = np.ones(s)
+    axis = np.ascontiguousarray(np.broadcast_to(card.axis[:, None, None, None], (3, *s)))
+    prob = Problem(Grid(nx, ny, nz, *card.cell), card.Ms * one, card.A * one, card.K * one, axis, (0, 0, 0), device=device)
+    magnetic = prob.Ms > 0
+
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "card.toml").write_bytes(card.text)
+    git = git_state(Path(__file__).parent)
+    if git is None:
+        print("micromag: warning: not running from a git checkout; provenance has no code version", file=sys.stderr)
+    elif git["dirty"]:
+        print("micromag: warning: uncommitted changes; recorded in git.diff", file=sys.stderr)
+        (out / "git.diff").write_text(git["diff"])
+    prov = {
+        "card": card.path.name, "status": "running", "error": None, "started": _now(), "finished": None,
+        "device": device, "gpu": _gpu_name() if device == "cuda" else None,
+        "versions": {"micromag": version("micromag"), "numpy": np.__version__, "h5py": h5py.__version__,
+                     "python": platform.python_version()},
+        "git": None if git is None else {"hash": git["hash"], "dirty": git["dirty"]},
+        "initial": initial, "stages": [],
+    }
+
+    def save():
+        (out / "provenance.json").write_text(json.dumps(prov, indent=2) + "\n")
+
+    def measure():
+        E = prob.energies(m)
+        e = [E[t] for t in ENERGIES]
+        return [*m[:, magnetic].mean(axis=1), *e, sum(e)]
+
+    save()
+    micro = Microstate(out / "magnetic_states.h5", card)
+    try:
+        for k, stage in enumerate(card.stages, 1):
+            start = time.perf_counter()
+            macro = Macrostate(out / f"stage{k}_{stage.type}.csv", COLUMNS[stage.type])
+            group = micro.stage(k, stage.type)
+            try:
+                summary = _run_stage(stage, prob, m, magnetic, measure, macro, micro, group)
+            except Exception as e:
+                micro.single("failed", m)
+                prov.update(status="failed", error=f"stage {k} ({stage.type}): {e}", finished=_now())
+                save()
+                print(f"stage {k}/{len(card.stages)} {stage.type}: FAILED: {e}", file=sys.stderr)
+                raise
+            finally:
+                macro.close()
+            wall = time.perf_counter() - start
+            prov["stages"].append({"type": stage.type, "wall_s": wall})
+            save()
+            print(f"stage {k}/{len(card.stages)} {stage.type}: {summary} ({wall:.1f} s)", flush=True)
+        micro.single("final", m)
+    finally:
+        micro.close()
+    prov.update(status="completed", finished=_now())
+    save()
+    return out
+
+
+def _run_stage(stage, prob, m, magnetic, measure, macro, micro, group):
+    """Runs one stage on m in place, writing its rows and snapshots. Returns the progress-line summary."""
+    if isinstance(stage, Hysteresis):
+        mn, total = Minimizer(prob), 0
+        fields = stage.fields_T()
+        for i, B in enumerate(fields):
+            prob.H_ext = tuple(B / mu0)
+            it = mn.minimize(m, stage.torque_tol, stage.max_iter)
+            total += it
+            macro.row([*B, *measure(), it])
+            if stage.dump or i == len(fields) - 1:
+                micro.append(group, m, B)
+        return f"{len(fields)} fields, µ0H {stage.mu0_H_from:g} → {stage.mu0_H_to:g} T along {np.round(stage.direction, 4).tolist()}, {total} iterations"
+
+    prob.H_ext = tuple(stage.mu0_H / mu0)  # stage-local: every stage sets its own field, zero by default (D27)
+    field = f"µ0H = {stage.mu0_H.tolist()} T"
+    if isinstance(stage, Minimize):
+        it = Minimizer(prob).minimize(m, stage.torque_tol, stage.max_iter)
+        macro.row([*stage.mu0_H, *measure(), it])
+        micro.append(group, m, stage.mu0_H)
+        return f"{it} iterations at {field}"
+
+    assert isinstance(stage, LLGDynamics)
+    llg = LLG(prob, stage.alpha, gamma=stage.gamma, tol=stage.tol, max_step=stage.max_step)
+    timed = stage.duration is not None
+    end = stage.duration if timed else stage.max_duration
+    H = np.empty_like(m)
+    for t, row, snap in _schedule(end, stage.sample_every if timed else stage.check_every, stage.dump_every):
+        if t > 0:
+            llg.run_until(m, t)
+        done = False
+        if row:
+            macro.row([t, *stage.mu0_H, *measure(), llg.steps, llg.rejected])
+            if not timed:
+                prob.effective_field(m, H)
+                torque = (np.linalg.norm(np.cross(m, H, axis=0), axis=0)[magnetic] / prob.Ms[magnetic]).max()
+                done = torque < stage.until_torque
+                if not done and t >= end:
+                    raise RuntimeError(f"until_torque = {stage.until_torque:g} not reached by max_duration = {end:g} s "
+                                       f"(max |m×H|/Ms = {torque:.2e})")
+        if snap or done:
+            micro.append(group, m, t)
+        if done:
+            break
+    return f"{llg.t * 1e9:.3f} ns, {llg.steps} steps, {llg.rejected} rejected, at {field}"
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(prog="micromag", description="Finite-difference micromagnetics.")
+    sub = p.add_subparsers(dest="command", required=True)
+    r = sub.add_parser("run", help="run one input card into a results folder")
+    r.add_argument("card", help="the input card (.toml)")
+    r.add_argument("-o", "--out", required=True, help="results folder; must be new or empty")
+    r.add_argument("--device", choices=["cpu", "cuda"], help="overrides the card's device")
+    a = p.parse_args(argv)
+    try:
+        run(a.card, a.out, a.device)
+    except (CardError, FileExistsError) as e:
+        print(f"micromag: {e}", file=sys.stderr)
+        return 2
+    except RuntimeError as e:  # a failed stage (already recorded in the folder) or a solver error
+        print(f"micromag: run failed: {e}", file=sys.stderr)
+        return 1
+    return 0

@@ -1,0 +1,31 @@
+# µMAG standard problem 4, field 1 (https://www.ctcms.nist.gov/~rdm/mumag.org.html).
+# A 500 × 125 × 3 nm permalloy film: relax the S-state, then reverse it in a field of (-24.6, 4.3, 0) mT.
+# The grid and solver settings are those of the direct test (D20); `uv run pytest -m slow` checks this card (D29).
+
+[grid]
+n    = [128, 32, 1]                    # cells along x, y, z
+cell = [3.90625e-9, 3.90625e-9, 3e-9]  # m
+
+[material]
+Ms = 8e5        # A/m
+A  = 1.3e-11    # J/m
+
+[initial]
+m = [1, 1, 1]   # normalised on load
+
+[[stage]]       # the S-state: damped dynamics until the torque is small
+type = "llg-dynamics"
+alpha = 1.0
+gamma = 1.759457895880903e11   # rad/(T·s); µMAG specifies µ0γ = 2.211e5 m/(A·s)
+tol = 1e-9                     # well below until_torque (D20)
+until_torque = 1e-6            # max |m × H| / Ms
+check_every = 50e-12           # s
+max_duration = 20e-9           # s
+
+[[stage]]       # the reversal, sampled every 1 ps like the OOMMF reference
+type = "llg-dynamics"
+alpha = 0.02
+gamma = 1.759457895880903e11
+mu0_H = [-24.6e-3, 4.3e-3, 0.0]   # T
+duration = 1e-9                   # s
+sample_every = 1e-12              # s
