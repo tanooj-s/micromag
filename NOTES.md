@@ -9,7 +9,7 @@ Each iteration is done when its check passes and its decisions are logged below.
 | 1 | Grid, per-cell materials, exchange / anisotropy / Zeeman (eqs. 8, 9, 11), CPU | Energies of uniform states; H matches the finite-difference gradient of E; analytic 1D Bloch wall (width π√(A/K)) is in equilibrium (torque → 0) with σ → 4√(AK), both errors falling ~4× per halving of dx (D13) | ✅ CPU (`tests/test_fields.py`) |
 | 2 | Demag: Newell tensor, direct O(N²) oracle, zero-padded FFT (eqs. 17–21) | Uniform prisms (cube, 1:2:3 cell, 32×32×1 film) match Aharoni's closed form to 1e-10; far-field tensor → point dipole with error ~4× smaller per doubling of distance; FFT and direct sum agree to 1e-12 (D17) | ✅ CPU (`tests/test_demag.py`) |
 | 3 | LLG (eq. 25) with a self-written adaptive Dormand–Prince RK45 | Macrospin matches the analytic solution; fixed-step error falls ~32× per halving of h (5th order); energy conserved at α = 0 and non-increasing at α > 0; µMAG SP4 field 1: first ⟨mx⟩ = 0 crossing within 3% of OOMMF and RMS ⟨m⟩ difference ≤ 0.05 over 0–1 ns (D20) | ✅ CPU (`tests/test_llg.py`; SP4 with `-m slow`) |
-| 4 | Minimizer: projected steepest descent with Barzilai–Borwein steps (eqs. 22–23), plus a hysteresis driver | Stoner–Wohlfarth astroid: switching fields at ψ = 15–75° within 2·10⁻³ H_K of `(cos^{2/3}ψ + sin^{2/3}ψ)^{−3/2}`; µMAG SP3 (20³): flower/vortex crossover L within 0.5% of 8.47 l_ex (D23) | **in progress:** design settled (D21–D23), implementing test-first |
+| 4 | Minimizer: projected steepest descent with Barzilai–Borwein steps (eqs. 22–23), plus a hysteresis driver | Stoner–Wohlfarth astroid: switching fields at ψ = 15–75° within 2·10⁻³ H_K of `(cos^{2/3}ψ + sin^{2/3}ψ)^{−3/2}`; µMAG SP3 (20³): flower/vortex crossover L within 0.5% of 8.47 l_ex (D23) | ✅ CPU (`tests/test_minimizer.py`; SP3 with `-m slow`) |
 | 5 | GPU backend: CUDA kernels + cuFFT; the backend interface is introduced here | GPU matches CPU on every test; Nsight roofline numbers recorded | todo |
 | 6 | Cluster science: Slurm job-array sweeps, output with provenance (git hash and parameters), scaling study. **Requirement (user, 2026-10-17):** a simple local workflow, parameters in → results out, that runs one simulation on the laptop CPU from an input file or CLI and writes its outputs, without hand-editing a Python script. The cluster sweeps should use the same entry point. | Coercivity vs cube size compared with paper Fig. 8a; one local run from an input file reproduces SP4 | todo |
 | 7 | Stretch, pick one: Voronoi grains / string method (NEB) / multi-GPU / thermal field | — | — |
@@ -62,7 +62,24 @@ Rave et al.'s partial energies at L = 8.47, in units of K_m L³:
 | Flower | 0.2794 | 0.0177 | 0.0056 |
 | Vortex | 0.0783 | 0.1723 | 0.0521 |
 
+**Ours (iteration 4, 20³):** L = 8.4551 (MagTense 20³: 8.4556). Flower 0.2797/0.0176/0.0056, total 0.3029; vortex 0.0783/0.1725/0.0520, total 0.3028 (demag/exchange/anisotropy, anisotropy in Rave's convention).
+
 Coarse grids bias L low (10³ gives about 0.7% low). Hertel's twisted flower is a different, lower-energy state, so it is not comparable to a symmetric-flower computation.
+
+### Stoner–Wohlfarth astroid
+The analytic switching field of a single-domain particle with uniaxial anisotropy, with the field at angle ψ to the easy axis: h_sw = (cos^{2/3}ψ + sin^{2/3}ψ)^{−3/2}, in units of H_K = 2K/(µ₀Ms).
+
+**Ours (iteration 4):** one cubic cell, easy axis z, Ms = 8e5 A/m, K = 5e5 J/m³. The field is swept from 0 to −1.2 H_K in steps of 10⁻³ H_K, and the switch is placed at the midpoint of the step with the largest |Δm|. Measured on 2026-10-17.
+
+| ψ | h_sw analytic | h_sw ours | error | max minimizer iterations per field step |
+|---|---|---|---|---|
+| 15° | 0.6147 | 0.6145 | −2×10⁻⁴ | 163 |
+| 30° | 0.5240 | 0.5245 | +5×10⁻⁴ | 151 |
+| 45° | 0.5000 | 0.5005 | +5×10⁻⁴ | 139 |
+| 60° | 0.5240 | 0.5245 | +5×10⁻⁴ | 128 |
+| 75° | 0.6147 | 0.6145 | −2×10⁻⁴ | 112 |
+
+Every error is within one field step, which is the resolution of the sweep. 0° and 90° are excluded, because there the reversed state is an exact (unstable) equilibrium (D23).
 
 ### µMAG Standard Problem 4, field 1
 Source: OOMMF 1.2 (Donahue & Porter), 1 nm cells. The trimmed time series is `tests/data/sp4_field1_oommf.csv`.
@@ -358,3 +375,5 @@ Source: OOMMF 1.2 (Donahue & Porter), 1 nm cells. The trimmed time series is `te
   - scipy's root finders: a new dependency for 10 lines.
   - Random-noise starts: a different state and a different reference value.
 - **Consequence:** the roadmap check was reworded to match.
+- **Correction (2026-10-17):** the vortex start is `normalise(0.2, −z, y)`, which circulates around x, **perpendicular** to the easy axis. The design said `normalise(−y, x, L/5)`, around z. That puts m in-plane against the anisotropy, and both the minimizer and damped LLG (α = 1, so not a basin-hopping artefact) relax it into the flower even at L = 9. With the corrected start at L = 8.47, our partial energies match Rave et al.: flower demag/exchange/anisotropy 0.2796/0.0176/0.0056 (Rave 0.2794/0.0177/0.0056); vortex 0.0780/0.1723/0.0519 (Rave 0.0783/0.1723/0.0521). Our anisotropy values are shifted +0.1 into Rave's K(1 − (m·k)²) convention (D12).
+- **Result:** at 20³, the crossover is L = 8.4551 l_ex. That is 0.18% below the 8.47 consensus and 0.0005 l_ex from MagTense's own 20³ result (8.4556). Stoner–Wohlfarth switching fields agree with the astroid to within 5×10⁻⁴ H_K at every angle tested. The SP3 run takes about 8 s on the laptop CPU.

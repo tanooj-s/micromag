@@ -10,6 +10,7 @@
 #include "demag.hpp"
 #include "fields.hpp"
 #include "llg.hpp"
+#include "minimizer.hpp"
 #include "problem.hpp"
 
 namespace nb = nanobind;
@@ -102,7 +103,28 @@ NB_MODULE(_core, m) {
         .def("effective_field", [](Problem& p, In mag, Out out) {
             check_shape(mag, p.grid(), true, "m"); check_shape(out, p.grid(), true, "out");
             p.effective_field(mag.data(), out.data());
-        }, "m"_a.noconvert(), "out"_a.noconvert(), "Sum of exchange, anisotropy, Zeeman and demag fields, A/m.");
+        }, "m"_a.noconvert(), "out"_a.noconvert(), "Sum of exchange, anisotropy, Zeeman and demag fields, A/m.")
+        .def("energies", [](Problem& p, In mag) {
+            check_shape(mag, p.grid(), true, "m");
+            const auto E = p.energies(mag.data());
+            nb::dict d;
+            d["exchange"] = E[0]; d["anisotropy"] = E[1]; d["zeeman"] = E[2]; d["demag"] = E[3];
+            return d;
+        }, "m"_a.noconvert(), "Partial energies (J): exchange, anisotropy, zeeman, demag.")
+        .def_prop_ro("Ms", [](const Problem& p) {
+            const Grid& g = p.grid();
+            auto* Ms = new std::vector<double>(p.Ms());
+            nb::capsule owner(Ms, [](void* q) noexcept { delete static_cast<std::vector<double>*>(q); });
+            return nb::ndarray<nb::numpy, double>(Ms->data(), {g.nz, g.ny, g.nx}, owner);
+        }, nb::rv_policy::move, "Copy of the per-cell saturation magnetisation (A/m).");  // the capsule owns it, not the Problem
+
+    nb::class_<Minimizer>(m, "Minimizer")
+        .def(nb::init<Problem&>(), "problem"_a, nb::keep_alive<1, 2>())
+        .def("minimize", [](Minimizer& mn, Out mag, double torque_tol, size_t max_iter) {
+            check_shape(mag, mn.grid(), true, "m");
+            return mn.minimize(mag.data(), torque_tol, max_iter);
+        }, "m"_a.noconvert(), "torque_tol"_a = 1e-6, "max_iter"_a = 100000,
+           "Minimize the energy in place until max |m x H| / Ms < torque_tol; returns the iteration count.");
 
     nb::class_<LLG>(m, "LLG")
         .def(nb::init<Problem&, double, double, double, double>(), "problem"_a, "alpha"_a, "gamma"_a = 1.76086e11,
