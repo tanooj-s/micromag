@@ -10,21 +10,21 @@ Each iteration is done when its check passes and its decisions are logged below.
 | 2 | Demag: Newell tensor, direct O(N²) oracle, zero-padded FFT (eqs. 17–21) | Uniform prisms (cube, 1:2:3 cell, 32×32×1 film) match Aharoni's closed form to 1e-10; far-field tensor → point dipole with error ~4× smaller per doubling of distance; FFT and direct sum agree to 1e-12 (D17) | ✅ CPU (`tests/test_demag.py`) |
 | 3 | LLG (eq. 25) with a self-written adaptive Dormand–Prince RK45 | Macrospin matches the analytic solution; fixed-step error falls ~32× per halving of h (5th order); energy conserved at α = 0 and non-increasing at α > 0; µMAG SP4 field 1: first ⟨mx⟩ = 0 crossing within 3% of OOMMF and RMS ⟨m⟩ difference ≤ 0.05 over 0–1 ns (D20) | ✅ CPU (`tests/test_llg.py`; SP4 with `-m slow`) |
 | 4 | Minimizer: projected steepest descent with Barzilai–Borwein steps (eqs. 22–23), plus a hysteresis driver | Stoner–Wohlfarth astroid: switching fields at ψ = 15–75° within 2·10⁻³ H_K of `(cos^{2/3}ψ + sin^{2/3}ψ)^{−3/2}`; µMAG SP3 (20³): flower/vortex crossover L within 0.5% of 8.47 l_ex (D23) | ✅ CPU (`tests/test_minimizer.py`; SP3 with `-m slow`) |
-| 5 | GPU backend: CUDA kernels + cuFFT; the backend interface is introduced here | Every test passes with `device="cuda"` and the direct CPU-vs-GPU comparisons hold their D26 tolerances, run on at least one CUDA GPU of sm_70 or newer (which GPU is recorded). Nsight roofline numbers are optional (D25) | **in progress**: design settled 2026-10-18 (D24–D26) |
+| 5 | GPU backend: CUDA kernels + cuFFT; the backend interface is introduced here | Every test passes with `device="cuda"` and the direct CPU-vs-GPU comparisons hold their D26 tolerances, run on at least one CUDA GPU of sm_70 or newer (which GPU is recorded). Nsight roofline numbers are optional (D25) | ✅ CPU + GPU (Tesla T4, CUDA 13.0, Colab, 2026-10-18; D26 Result) |
 | 6 | Cluster science: Slurm job-array sweeps, output with provenance (git hash and parameters), scaling study. **Requirement (user, 2026-10-17):** a simple local workflow, parameters in → results out, that runs one simulation on the laptop CPU from an input file or CLI and writes its outputs, without hand-editing a Python script. The cluster sweeps should use the same entry point. | Coercivity vs cube size compared with paper Fig. 8a; one local run from an input file reproduces SP4 | todo |
 | 7 | Stretch, pick one: Voronoi grains / string method (NEB) / multi-GPU / thermal field | — | — |
 
 ## Resume here
-State on 2026-10-17: iterations 1–4 are done on the CPU. Everything is committed and pushed to `origin main`. `uv run pytest` gives 37 passed, 1 skipped (CUDA) and 2 deselected (slow).
-- **2026-10-18:** the user chose to write the CUDA code now and treat the cluster as one optional GPU target among many (D25). The iteration-5 design is D24–D26. The backend refactor is done and green on the CPU. `src/cuda_backend.cu` is written but has never run on a GPU.
-- **Compile check passed (2026-10-18):** the laptop's Docker Desktop was an Intel 4.3.0 build that refuses to start on Apple Silicon; the user reinstalled it (arm64, 4.95.0). In `nvidia/cuda:12.1.1-devel-ubuntu22.04` (aarch64 host, GCC 11.4, nvcc 12.1.105, sm_70), the CUDA build compiles and links with no warnings, and imports with `has_cuda = True`. Without a GPU, the CPU tests pass (42 passed); `test_fixed_steps_match_cpu` and `device="cuda"` fail cleanly with `RuntimeError: CUDA: CUDA driver version is insufficient for CUDA runtime version`, which is expected with no driver.
-- **Next:** (1) compile check (passed, rerun after CUDA changes), from the repo root:
+State on 2026-10-18: iterations 1–5 are done. Iteration 5 passes on a Tesla T4 (Colab, CUDA 13.0; D26 Result). `uv run pytest` on the laptop gives 43 passed, 30 skipped (the CUDA cases) and 4 deselected (slow).
+- **Next:** iteration 6. The cluster remains an optional GPU target (D25); its build needs the numpy cap (see the optional open issue below).
+- **CUDA compile check without a GPU** (rerun after CUDA changes), from the repo root, with Docker Desktop for Apple Silicon:
   ```
   docker run --rm -v "$PWD":/src -w /src -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e SKBUILD_CMAKE_DEFINE=MICROMAG_CUDA=ON \
     nvidia/cuda:12.1.1-devel-ubuntu22.04 bash -c \
     'apt-get update -qq && apt-get install -y -qq curl >/dev/null && curl -LsSf https://astral.sh/uv/install.sh | sh && . $HOME/.local/bin/env && uv sync'
   ```
-  (2) on any NVIDIA GPU of sm_70 or newer with CUDA 12: build with `SKBUILD_CMAKE_DEFINE=MICROMAG_CUDA=ON uv sync`, then `uv run pytest -m "" -v`. Record the GPU, then run the CUDA mutation check.
+  The laptop's original Docker Desktop was an Intel 4.3.0 build that refuses to start on Apple Silicon; the user reinstalled the arm64 build (4.95.0) on 2026-10-18.
+- **GPU run on Colab:** pick the T4 runtime, clone, install uv, set `PATH` to include `/root/.local/bin` and `/usr/local/cuda/bin`, `CUDACXX=/usr/local/cuda/bin/nvcc` and `SKBUILD_CMAKE_DEFINE=MICROMAG_CUDA=ON` in `os.environ` (a later `uv run` without that variable silently rebuilds without CUDA), then `uv sync` and `uv run pytest -m "" -v -s`.
 - **Known test gap:** a wrong embedded-error weight in the LLG integrator makes the error estimate too large, which wastes steps but gives correct results, and no test catches it. A step-count bound on the macrospin run would close the gap. This was offered to the user and not added (iteration 3).
 - **Carried requirement:** the local "parameters in → results out" workflow belongs to iteration 6 (see its roadmap row).
 
@@ -78,6 +78,8 @@ Rave et al.'s partial energies at L = 8.47, in units of K_m L³:
 
 **Ours (iteration 4, 20³):** L = 8.4551 (MagTense 20³: 8.4556). Flower 0.2797/0.0176/0.0056, total 0.3029; vortex 0.0783/0.1725/0.0520, total 0.3028 (demag/exchange/anisotropy, anisotropy in Rave's convention).
 
+**Ours (iteration 5, GPU, Tesla T4):** identical to the CPU to the printed digits: L = 8.4551, same partial energies.
+
 Coarse grids bias L low (10³ gives about 0.7% low). Hertel's twisted flower is a different, lower-energy state, so it is not comparable to a symmetric-flower computation.
 
 ### Stoner–Wohlfarth astroid
@@ -100,6 +102,7 @@ Source: OOMMF 1.2 (Donahue & Porter), 1 nm cells. The trimmed time series is `te
 - S-state ⟨m⟩ = (0.9666, 0.1260, 0.0000).
 - First ⟨mx⟩ = 0 crossing at 138.4 ps (interpolated from the 1 ps samples).
 - Ours (iteration 3, 128×32×1): S-state ⟨m⟩ = (0.9670, 0.1253, 0.0000); crossing at 138.6 ps; RMS ⟨m⟩ difference over 0–1 ns = 0.0051.
+- Ours (iteration 5, GPU, Tesla T4): identical to the CPU, including the step count (1979 steps, 1 rejected) and the 2.80 ns S-state relaxation.
 
 ## Decision log
 <!-- Format, one entry per decision:
@@ -441,3 +444,9 @@ Source: OOMMF 1.2 (Donahue & Porter), 1 nm cells. The trimmed time series is `te
   - Python-level tests of the new interface run on the CPU too: an unknown `device` raises, and `device="cuda"` raises on a build without CUDA.
 - **Alternatives:** bitwise equality (impossible with fused multiply-adds and cuFFT), or comparing only the physics tests (a constant-factor kernel bug could hide inside a loose physics tolerance).
 - **Consequence:** the roadmap check was reworded to match.
+- **Result (2026-10-18):** on Colab, a Tesla T4 (sm_75) with nvcc 13.0.88, GCC 13.3 and Python 3.13.15, built with the toolkit-chosen architecture 75 (D25 correction): `pytest -m ""` gives 76 passed, 1 skipped (the no-CUDA-build check) in 141 s. Every physics test passes on both devices, and every direct comparison holds its tolerance. SP3 and SP4 print the same numbers on the GPU as on the CPU, including SP4's step count (1979 accepted, 1 rejected), so the rounding differences never changed an accept/reject decision. T4 runs FP64 at 1/32 of FP32, so its timings are not performance figures.
+- **Mutation check (GPU, run on Colab):**
+  - M1, demag multiply using N_xy in place of N_xz in the z row: caught by FFT vs direct sum, the demag gradient, the oracle comparison, energy conservation, the fixed-step comparison and the energies test. Aharoni does not catch it: a symmetric prism has zero off-diagonal body tensor (as D17 anticipated).
+  - M2, exchange using dx in place of dy for the +y neighbour: caught by the exchange gradient test (the operator is no longer symmetric), the oracle comparison, energy conservation, the fixed-step comparison and the energies test.
+  - M3, `lincomb` dropping its last term: caught by the macrospin test (the run used `-x`, so only the first failure is recorded). Without `-x` the run is very slow, because the broken step keeps the error estimate high and the controller keeps shrinking the step.
+  - M4, the BB sums over the x components only: caught by Stoner–Wohlfarth at 15° (with `-x`). The design expected this one might survive.
