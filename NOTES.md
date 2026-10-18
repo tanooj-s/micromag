@@ -5,18 +5,18 @@ Each iteration is done when its check passes and its decisions are logged below.
 
 | # | Iteration | Check | Status |
 |---|-----------|-------|--------|
-| 0 | Toolchain: CMake + bindings + pytest + one CUDA kernel, run on a laptop and on a cluster GPU node through Slurm | Kernel test passes in both places | laptop ✅ · cluster blocked (see below) |
+| 0 | Toolchain: CMake + bindings + pytest + one CUDA kernel, run on a laptop and on a cluster GPU node through Slurm | Kernel test passes in both places | laptop ✅ · cluster optional (see below, D25) |
 | 1 | Grid, per-cell materials, exchange / anisotropy / Zeeman (eqs. 8, 9, 11), CPU | Energies of uniform states; H matches the finite-difference gradient of E; analytic 1D Bloch wall (width π√(A/K)) is in equilibrium (torque → 0) with σ → 4√(AK), both errors falling ~4× per halving of dx (D13) | ✅ CPU (`tests/test_fields.py`) |
 | 2 | Demag: Newell tensor, direct O(N²) oracle, zero-padded FFT (eqs. 17–21) | Uniform prisms (cube, 1:2:3 cell, 32×32×1 film) match Aharoni's closed form to 1e-10; far-field tensor → point dipole with error ~4× smaller per doubling of distance; FFT and direct sum agree to 1e-12 (D17) | ✅ CPU (`tests/test_demag.py`) |
 | 3 | LLG (eq. 25) with a self-written adaptive Dormand–Prince RK45 | Macrospin matches the analytic solution; fixed-step error falls ~32× per halving of h (5th order); energy conserved at α = 0 and non-increasing at α > 0; µMAG SP4 field 1: first ⟨mx⟩ = 0 crossing within 3% of OOMMF and RMS ⟨m⟩ difference ≤ 0.05 over 0–1 ns (D20) | ✅ CPU (`tests/test_llg.py`; SP4 with `-m slow`) |
 | 4 | Minimizer: projected steepest descent with Barzilai–Borwein steps (eqs. 22–23), plus a hysteresis driver | Stoner–Wohlfarth astroid: switching fields at ψ = 15–75° within 2·10⁻³ H_K of `(cos^{2/3}ψ + sin^{2/3}ψ)^{−3/2}`; µMAG SP3 (20³): flower/vortex crossover L within 0.5% of 8.47 l_ex (D23) | ✅ CPU (`tests/test_minimizer.py`; SP3 with `-m slow`) |
-| 5 | GPU backend: CUDA kernels + cuFFT; the backend interface is introduced here | GPU matches CPU on every test; Nsight roofline numbers recorded | **next**, paused by the user on 2026-10-17. See "Resume here". |
+| 5 | GPU backend: CUDA kernels + cuFFT; the backend interface is introduced here | Every test passes with `device="cuda"` and the direct CPU-vs-GPU comparisons hold their D26 tolerances, run on at least one CUDA GPU of sm_70 or newer (which GPU is recorded). Nsight roofline numbers are optional (D25) | **in progress**: design settled 2026-10-18 (D24–D26) |
 | 6 | Cluster science: Slurm job-array sweeps, output with provenance (git hash and parameters), scaling study. **Requirement (user, 2026-10-17):** a simple local workflow, parameters in → results out, that runs one simulation on the laptop CPU from an input file or CLI and writes its outputs, without hand-editing a Python script. The cluster sweeps should use the same entry point. | Coercivity vs cube size compared with paper Fig. 8a; one local run from an input file reproduces SP4 | todo |
 | 7 | Stretch, pick one: Voronoi grains / string method (NEB) / multi-GPU / thermal field | — | — |
 
 ## Resume here
-State on 2026-10-17: iterations 1–4 are done on the CPU. Everything is committed and pushed to `origin main`. `uv run pytest` gives 37 passed, 1 skipped (CUDA) and 2 deselected (slow). The user paused before iteration 5.
-- **First question when resuming iteration 5:** fix the cluster build first (the open issue below), or write the CUDA code blind and test it once the cluster works. GPU code can only be tested on the cluster.
+State on 2026-10-17: iterations 1–4 are done on the CPU. Everything is committed and pushed to `origin main`. `uv run pytest` gives 37 passed, 1 skipped (CUDA) and 2 deselected (slow).
+- **2026-10-18:** the user chose to write the CUDA code now and treat the cluster as one optional GPU target among many (D25). The iteration-5 design is D24–D26.
 - **Known test gap:** a wrong embedded-error weight in the LLG integrator makes the error estimate too large, which wastes steps but gives correct results, and no test catches it. A step-count bound on the macrospin run would close the gap. This was offered to the user and not added (iteration 3).
 - **Carried requirement:** the local "parameters in → results out" workflow belongs to iteration 6 (see its roadmap row).
 
@@ -30,12 +30,12 @@ State on 2026-10-17: iterations 1–4 are done on the CPU. Everything is committ
 - **No Python module.** A shared conda env exists, but it belongs to another project, so we don't use it.
 - **Slurm partition and account:** TBD. These are only needed if `sbatch` rejects the job without them. Find them with `sinfo -s` and `sacctmgr show assoc user=$USER format=account,partition`.
 
-### Open issue: cluster build (deferred 2026-10-17)
+### Optional open issue: cluster build (deferred 2026-10-17; optional since 2026-10-18, D25)
 - **Symptom:** `uv sync` builds numpy 2.5.4 from source, and the build fails because the system `cc` is gcc 4.8.5 (RHEL 7).
-- **Likely cause:** RHEL 7 has glibc 2.17, while numpy 2.5 only ships wheels for glibc ≥ 2.28 (manylinux_2_28). So there is no wheel to install, and uv falls back to compiling from source.
-- **Fixes to try:**
-  - Pin numpy to the last version with manylinux2014 (glibc 2.17) wheels for cp313.
-  - Or export `CC=gcc` after the gcc 8.4 module load, so the source build can at least compile.
+- **Cause (verified 2026-10-18 against PyPI and the numpy 2.3.0 release notes):** RHEL 7 has glibc 2.17. numpy 2.3 moved from manylinux2014 to manylinux_2_28 wheels, which drops RHEL/CentOS 7. **numpy 2.2.6 is the last release with glibc 2.17 wheels for cp313.** With no matching wheel, uv falls back to a source build.
+- **Fix:** cap numpy below 2.3 (`numpy<2.3`). `uv.lock` is universal, so the laptop also moves to 2.2.6, which keeps both machines identical (the D8 reasoning).
+- **Won't work:** `export CC=gcc` after the gcc 8.4 load. numpy ≥ 2.3 needs gcc ≥ 9.3 to build, and `cuda/12.1` is only offered under gcc 8.4 (D4).
+- **After that:** the CMake log should report `The CXX compiler identification is GNU 8.4.0`. If it shows 4.8.5, `export CXX=g++`. The cmake and ninja wheels from PyPI still support glibc 2.17.
 - Already fixed: home-directory quota (uv cache moved to scratch) and the empty `CUDA_ARCHITECTURES`.
 
 ## MagTense weaknesses we want to avoid
@@ -383,3 +383,48 @@ Source: OOMMF 1.2 (Donahue & Porter), 1 nm cells. The trimmed time series is `te
 - **Consequence:** the roadmap check was reworded to match.
 - **Correction (2026-10-17):** the vortex start is `normalise(0.2, −z, y)`, which circulates around x, **perpendicular** to the easy axis. The design said `normalise(−y, x, L/5)`, around z. That puts m in-plane against the anisotropy, and both the minimizer and damped LLG (α = 1, so not a basin-hopping artefact) relax it into the flower even at L = 9. With the corrected start at L = 8.47, our partial energies match Rave et al.: flower demag/exchange/anisotropy 0.2796/0.0176/0.0056 (Rave 0.2794/0.0177/0.0056); vortex 0.0780/0.1723/0.0519 (Rave 0.0783/0.1723/0.0521). Our anisotropy values are shifted +0.1 into Rave's K(1 − (m·k)²) convention (D12).
 - **Result:** at 20³, the crossover is L = 8.4551 l_ex. That is 0.18% below the 8.47 consensus and 0.0005 l_ex from MagTense's own 20³ result (8.4556). Stoner–Wohlfarth switching fields agree with the astroid to within 5×10⁻⁴ H_K at every angle tested. The SP3 run takes about 8 s on the laptop CPU.
+
+### D24: One driver, two backends; the device is chosen on `Problem` (refines D9, D16, D18, D19) (2026-10-18)
+- **Context:** iteration 5 is the first second implementation, so the backend interface is introduced here. D18 and D21 put the LLG and minimizer loops in C++ so that m never crosses between host and device inside a run.
+- **Decision:**
+  - `LLG` and `Minimizer` keep one copy of their control logic: step accept/reject and step-size control (D18), and the Barzilai–Borwein steps (D21). They call a small backend interface for the per-cell work: effective field, energies, the LLG right-hand side, combining Runge–Kutta stages, the per-cell error max-norm, normalising, the minimizer's direction and torque, and the BB dot products.
+  - `CpuBackend` wraps the existing loops unchanged. `CudaBackend` runs kernels on buffers it owns on the device.
+  - `Problem(..., device="cpu" | "cuda")`. The materials are uploaded once. `LLG` and `Minimizer` follow their `Problem`'s device.
+  - m stays a numpy array (D9). It is copied to the device at the start of each `run_until` or `minimize` call and back at the end, with no host copies in between. `effective_field` and `energies` copy in and out per call.
+  - `device="cuda"` on a build without CUDA raises.
+- **Alternatives:**
+  - Separate `CudaLLG` and `CudaMinimizer` classes: no interface, but the subtle controller logic lives in two places and can drift.
+  - GPU fields only, with the drivers on the host: per-stage transfers, which D18 rejected.
+  - Separate Python classes (`mm.cuda.Problem`): every test and `hysteresis` would need two code paths.
+  - Device arrays in Python (CuPy, DLPack): a new dependency before anything needs it.
+- **Consequence:** the CPU backend is the oracle for the CUDA one by construction, and the existing physics tests run on the GPU unchanged apart from a `device` parameter. The interface is shaped by exactly the two drivers that use it.
+
+### D25: CUDA portability: any sm_70+ GPU, float64, cluster optional (refines D4, D6) (2026-10-18)
+- **Context:** the user expects to run on machines and GPUs beyond the V100 cluster later, and chose not to block iteration 5 on the cluster build. The laptop has no NVIDIA GPU.
+- **Decision:**
+  - `CMAKE_CUDA_ARCHITECTURES` stays 70 by default. CMake's `70` embeds both V100 machine code and compute_70 PTX, which the driver JIT-compiles for any newer GPU (T4, A100, RTX, H100) on first load.
+  - Precision stays float64 (D9).
+  - The demag tensor and its spectrum are still built on the CPU with the D14/D15 code and uploaded once. Only the per-call convolution runs on the GPU, in cuFFT (batched D2Z/Z2D).
+  - Device-wide sums and maxima use CUB, which ships with the CUDA toolkit.
+  - **Local check:** a CUDA build inside an `nvidia/cuda` Docker image. nvcc compiles without a GPU, so compile errors surface on the laptop.
+  - **GPU check:** the tests run unchanged on any NVIDIA GPU of sm_70 or newer with CUDA 12. The cluster is one optional target, and so are its numpy fix and the Nsight roofline numbers.
+- **Alternatives:**
+  - `all-major` architectures: no first-load JIT delay, but several times the compile time.
+  - `native`: fails on GPU-less build hosts (login nodes, Docker).
+  - A float32 or mixed-precision path: no second precision is needed yet (D9).
+  - Fixing the cluster first: the earlier recommendation, declined by the user.
+- **Consequence:** the build is portable without per-machine flags. **Known limit:** consumer RTX cards run FP64 at 1/32 to 1/64 of their FP32 rate, compared with 1/2 on V100 and A100, so they will be slow. GPU tests cannot go red against stubs, and the mutation check cannot run, until a GPU machine is used. Iteration 5 stays unchecked until then.
+
+### D26: Iteration-5 checks (2026-10-18)
+- **Context:** D7 requires every CPU-vs-GPU comparison that is not bitwise to state its tolerance and the reason.
+- **Decision:**
+  - **Physics:** the existing tests take a `device` parameter (`cpu`, `cuda`), and the CUDA case is skipped without a CUDA build: macrospin, fifth order, energy, gradient, vacuum, Bloch wall, Aharoni, SP4, Stoner–Wohlfarth and SP3.
+  - **Direct comparisons:**
+    - Exchange and anisotropy fields agree to ≤ 1e-14·max|H|: nvcc fuses multiply-adds, and per-cell operation order can differ.
+    - The Zeeman field is bitwise equal, because it is a copy.
+    - cuFFT demag agrees with pocketfft to 1e-12 on the norm, the D17 bar for a different FFT.
+    - Energies agree to 1e-12 relative, because the reduction order differs.
+    - A fixed-step LLG run (tol = ∞, `max_step` = h, 5 steps on the random problem) agrees to 1e-12 in max |Δm|. Adaptive runs are not compared directly, because rounding differences change the accepted step sequence; the physics tests cover them.
+  - Python-level tests of the new interface run on the CPU too: an unknown `device` raises, and `device="cuda"` raises on a build without CUDA.
+- **Alternatives:** bitwise equality (impossible with fused multiply-adds and cuFFT), or comparing only the physics tests (a constant-factor kernel bug could hide inside a loose physics tolerance).
+- **Consequence:** the roadmap check was reworded to match.
