@@ -8,7 +8,7 @@ Each iteration is done when its check passes and its decisions are logged below.
 | 0 | Toolchain: CMake + bindings + pytest + one CUDA kernel, run on a laptop and on a cluster GPU node through Slurm | Kernel test passes in both places | laptop ✅ · cluster blocked (see below) |
 | 1 | Grid, per-cell materials, exchange / anisotropy / Zeeman (eqs. 8, 9, 11), CPU | Energies of uniform states; H matches the finite-difference gradient of E; analytic 1D Bloch wall (width π√(A/K)) is in equilibrium (torque → 0) with σ → 4√(AK), both errors falling ~4× per halving of dx (D13) | ✅ CPU (`tests/test_fields.py`) |
 | 2 | Demag: Newell tensor, direct O(N²) oracle, zero-padded FFT (eqs. 17–21) | Uniform prisms (cube, 1:2:3 cell, 32×32×1 film) match Aharoni's closed form to 1e-10; far-field tensor → point dipole with error ~4× smaller per doubling of distance; FFT and direct sum agree to 1e-12 (D17) | ✅ CPU (`tests/test_demag.py`) |
-| 3 | LLG (eq. 25) with a self-written adaptive Dormand–Prince RK45 | Macrospin matches the analytic solution; µMAG SP4 within a few % | todo |
+| 3 | LLG (eq. 25) with a self-written adaptive Dormand–Prince RK45 | Macrospin matches the analytic solution; fixed-step error falls ~32× per halving of h (5th order); energy conserved at α = 0 and non-increasing at α > 0; µMAG SP4 field 1: first ⟨mx⟩ = 0 crossing within 3% of OOMMF and RMS ⟨m⟩ difference ≤ 0.05 over 0–1 ns (D20) | **in progress:** design settled (D18–D20), implementing test-first |
 | 4 | Minimizer: projected steepest descent with Barzilai–Borwein steps (eqs. 22–23), plus a hysteresis driver | Stoner–Wohlfarth astroid; µMAG SP2 or SP3 | todo |
 | 5 | GPU backend: CUDA kernels + cuFFT; the backend interface is introduced here | GPU matches CPU on every test; Nsight roofline numbers recorded | todo |
 | 6 | Cluster science: Slurm job-array sweeps, output with provenance (git hash and parameters), scaling study | Coercivity vs cube size compared with paper Fig. 8a | todo |
@@ -226,3 +226,53 @@ Each iteration is done when its check passes and its decisions are logged below.
   - Demag joins the iteration 1 gradient, vacuum and rejection tests. The gradient test proves N_ij = N_jiᵀ, which checks the mirroring.
 - **Alternatives:** the roadmap's original "trace = 1, Nxx = 1/3, Nzz → 1", which is weaker and does not test the off-diagonal components.
 - **Consequence:** mpmath becomes a dev dependency. The roadmap check was reworded to match.
+
+### D18: LLG integrator: C++ Dormand–Prince RK45 (2026-10-17)
+- **Context:** iteration 3 needs time integration of eq. 25. Once the arrays live on the GPU (iteration 5), a Python-driven loop would copy m between host and device at every stage.
+- **Decision:**
+  - The LL form of LLG (eq. 25): `dm/dt = −γ′ m × H − α γ′ m × (m × H)`, with `γ′ = µ₀|γ|/(1+α²)`.
+  - α (dimensionless Gilbert damping) and γ are scalars on the integrator. γ defaults to the paper's 1.76086e11 rad/(T·s); SP4 passes its own µ₀γ = 2.211e5 m/(A·s).
+  - Dormand–Prince 5(4) in C++, with FSAL. The reused stage is discarded at the start of every `run_until` call, because Python may have changed m or H_ext in between.
+  - Error control: the step error is the largest |m₅ − m₄| over all cells. `h_new = h·0.9·(tol/err)^(1/5)`, clamped to 0.2–5×. A step is rejected if err > tol.
+  - m is renormalised after each accepted step. The error estimate is taken before renormalising.
+  - `run_until(m, t)` shortens its last step to land exactly on t. m is numpy-owned and updated in place. `max_step` defaults to ∞.
+  - Defaults: tol = 1e-6. The first step is 1% of a precession period at the current largest field. The step size carries over between calls.
+  - The integrator exposes `t`, `steps` and `rejected`.
+- **Alternatives:**
+  - A numpy driver: easiest to read, but forces device↔host copies on every stage on the GPU.
+  - Per-cell α: nothing on the roadmap varies it.
+  - No renormalisation: |m| drift accumulates over long runs.
+  - A geometric (norm-preserving) integrator: a different family of method.
+  - RMS error norm: it dilutes a few fast-switching cells in a large grid.
+  - Dense output: more coefficients to get right, for a gain we don't need.
+  - Keeping the reused stage across calls: faster, but stale-state bugs show up only as subtly wrong physics.
+- **Consequence:** a fresh field evaluation per output sample costs about 8% at SP4's 1 ps sampling. Switch to invalidating the stored stage only on change if profiling says so. The GPU port changes where the arrays live, not who drives the loop.
+
+### D19: `Problem` assembles H_eff (2026-10-17)
+- **Context:** the integrator, and the minimizer in iteration 4, need the sum of the four field terms.
+- **Decision:**
+  - `Problem(grid, Ms, A, K, k, H_ext)` copies the material arrays and owns a `Demag` and one scratch buffer.
+  - `effective_field(m, out)` sums the terms. Each term keeps D10's overwrite semantics and is added from the scratch buffer.
+  - `H_ext` is settable. All four terms are always on; set K = 0 or H_ext = 0 to switch one off.
+  - `LLG` holds its `Problem` through nanobind `keep_alive`.
+- **Alternatives:**
+  - Storing pointers into numpy arrays: Python could free them while C++ still uses them.
+  - Accumulate semantics for the terms: D10 says switch only on profiling evidence.
+  - Flags to enable each term: unneeded, since zero parameters already disable a term.
+- **Consequence:** changing a material means building a new `Problem`.
+
+### D20: Iteration-3 checks (2026-10-17)
+- **Context:** an adaptive integrator hides its own bugs. A wrong coefficient only lowers the order, and the controller compensates with smaller steps.
+- **Decision:**
+  - **Macrospin:** one cell, field along z, α = 0.1, θ₀ = 30°, 3 periods. The analytic solution is `φ = φ₀ + ωt`, `tan(θ/2) = tan(θ₀/2)·e^(−αωt)`, with `ω = µ₀|γ|H/(1+α²)`. Error ≤ 10·tol at tol = 1e-8. The demag field of a single cube is parallel to m, so it exerts no torque.
+  - **Order:** tol = ∞ with max_step = h forces fixed steps. The error ratio per halving of h must be 26–38 (5th order gives 32).
+  - **Energy:** on a random multi-cell problem, the relative drift is < 1e-6 at α = 0 (tol 1e-9); energy never increases between samples at α > 0; |m| = 1 within 1e-14.
+  - **µMAG SP4:** a 128×32×1 grid (3.9×3.9×3 nm, below the 5.7 nm exchange length). The S-state comes from relaxing uniform (1,1,1)/√3 at H = 0 and α = 1 until max |m × H|/Ms < 1e-6, and its ⟨m⟩ must be within 0.01 of OOMMF's (0.9666, 0.1260, 0). For field 1 (−24.6, 4.3, 0 mT), α = 0.02, µ₀γ = 2.211e5: the first ⟨mx⟩ = 0 crossing must be within 3% of OOMMF's, and the RMS ⟨m⟩ difference over 0–1 ns ≤ 0.05.
+  - **SP4 reference:** the OOMMF 1.2 time series (Donahue & Porter, 1 nm cells) from https://www.ctcms.nist.gov/~rdm/std4/Donahue/stdprob4a.odt, trimmed to t ≤ 1 ns and committed as `tests/data/sp4_field1_oommf.csv` with a provenance header.
+  - SP4 is marked `slow` and excluded from the default `uv run pytest`. Run it with `-m slow`; the cluster job runs everything.
+- **Alternatives:**
+  - Field 2: the µMAG page reports that the solvers diverge on it.
+  - Downloading the reference data at test time: compute nodes have no internet.
+  - The µMAG field ramp from saturation: costlier, and it ends in the same S-state basin.
+  - OOMMF's 1 nm grid: 187,500 cells, which waits for the GPU.
+- **Consequence:** if SP4 fails, the first response is a grid-refinement study, not a looser tolerance.
