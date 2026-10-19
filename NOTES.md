@@ -17,11 +17,21 @@ Each iteration is done when its check passes and its decisions are logged below.
 | 7 | Stretch, pick one: Voronoi grains / string method (NEB) / multi-GPU / thermal field | — | — |
 
 ## Resume here
-State on 2026-10-18: iterations 1–5 are done. Iteration 5 passes on a Tesla T4 (Colab, CUDA 13.0; D26 Result). `uv run pytest` on the laptop gives 43 passed, 30 skipped (the CUDA cases) and 4 deselected (slow).
-- **2026-10-18:** iteration 6 was split into 6a and 6b; 6a is done (D27–D29). Run a card with `uv run micromag run examples/sp4.toml -o runs/sp4` (`runs/` is git-ignored).
-- **User plan (2026-10-18):** start using the code to run simulations and log results within 24 hours, i.e. by 2026-10-19. Priority: make the run-and-record workflow (cards → `micromag run` → results folders) dependable for that.
-- **Slow suite (user choice, 2026-10-18):** the cube checks stay on both devices (D32), even though they take about 11 minutes on the laptop CPU; `-m slow` is opt-in.
-- **Next:** iteration 6b on a GPU: `uv run pytest -m slow -k coercivity -s` on Colab (SP2 at d/l_ex = 20 and 30, the 50 nm cube), then the recorded runs `examples/sp2.toml` (and the other SP2 sizes) and `examples/cube_core_shell.toml`. 6b's CPU checks pass (D32 Result). The large runs (SP2 d/l_ex = 20 and 30, the 50 nm cube, the full SP2 curve, the 100 nm cube) need a GPU (Colab recipe above). The cluster remains an optional GPU target (D25); its build needs the numpy cap (see the optional open issue below).
+State at the end of the 2026-10-18 session: everything is committed and pushed.
+- **Done:** iterations 1–5 (5 verified on a Tesla T4), 6a (the card → `micromag run` → results folder workflow), and 6b's CPU checks.
+- **Test counts:** `uv run pytest` gives 75 passed, 30 skipped (CUDA) and 19 deselected (slow). `-m slow` takes about 14 minutes on the laptop CPU, mostly the cube checks; the user chose to keep them on both devices (D32).
+- **User plan:** start running simulations and logging results by **2026-10-19**. The run-and-record workflow is the priority.
+- **First thing next session:** ask which simulations the user wants to run first, and check the card covers them:
+  - regions are interim boxes only (D30)
+  - stages are `llg-dynamics`, `minimize` and `hysteresis`
+  - there is no cross-run results table yet: each run is its own folder under the git-ignored `runs/`. A small `micromag summarize runs/*`, reading each `provenance.json` into one table, was suggested and not yet agreed.
+- **Open work, in rough order:**
+  1. **6b on a GPU (Colab):** `uv run pytest -m slow -k coercivity -s` (SP2 at d/l_ex = 20 and 30, the 50 nm cube), then the recorded runs `examples/sp2.toml` (plus the other SP2 sizes) and `examples/cube_core_shell.toml`. Record the results in "Reference benchmarks"; then 6b is ✅.
+  2. **The 6c design:** an original study using the 6b tools.
+  3. **The material-regions design** ("Open design: material regions", R1–R9). Not started; boxes are the stopgap.
+  4. **Iteration 7** (stretch).
+- **Run a card:** `uv run micromag run examples/sp4.toml -o runs/sp4` (add `--device cuda` on a GPU machine).
+- **Optional:** the cluster is one GPU target among many (D25). Its build needs numpy and h5py capped at versions with glibc 2.17 wheels (see the optional open issue below).
 - **CUDA compile check without a GPU** (rerun after CUDA changes), from the repo root, with Docker Desktop for Apple Silicon:
   ```
   docker run --rm -v "$PWD":/src -w /src -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e SKBUILD_CMAKE_DEFINE=MICROMAG_CUDA=ON \
@@ -30,8 +40,7 @@ State on 2026-10-18: iterations 1–5 are done. Iteration 5 passes on a Tesla T4
   ```
   The laptop's original Docker Desktop was an Intel 4.3.0 build that refuses to start on Apple Silicon; the user reinstalled the arm64 build (4.95.0) on 2026-10-18.
 - **GPU run on Colab:** pick the T4 runtime, clone, install uv, set `PATH` to include `/root/.local/bin` and `/usr/local/cuda/bin`, `CUDACXX=/usr/local/cuda/bin/nvcc` and `SKBUILD_CMAKE_DEFINE=MICROMAG_CUDA=ON` in `os.environ` (a later `uv run` without that variable silently rebuilds without CUDA), then `uv sync` and `uv run pytest -m "" -v -s`.
-- **Known test gap:** a wrong embedded-error weight in the LLG integrator makes the error estimate too large, which wastes steps but gives correct results, and no test catches it. A step-count bound on the macrospin run would close the gap. This was offered to the user and not added (iteration 3).
-- **Carried requirement:** the local "parameters in → results out" workflow belongs to iteration 6 (see its roadmap row).
+- **Known test gap (iteration 3):** a wrong embedded-error weight in the LLG integrator makes the error estimate too large, which wastes steps but gives correct results, and no test catches it. A step-count bound on the macrospin run would close the gap. This was offered to the user and not added (iteration 3).
 
 ## Cluster environment
 - **GPU nodes:** 8× Tesla V100-SXM2-32GB per node (sm_70). The driver is 535.104 and supports CUDA ≤ 12.2.
