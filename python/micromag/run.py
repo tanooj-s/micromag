@@ -3,7 +3,7 @@
     micromag run CARD -o DIR [--device cuda]
 
 The folder holds the card, provenance.json, one macrostate table per stage (stage<k>_<type>.csv, like LAMMPS thermo
-output) and the microstates in magnetic_states.h5 (like a LAMMPS dump). See D27 for the card and D28 for the folder.
+output) and the microstates in trajectory.h5 (like a LAMMPS dump). See D27 for the card and D28 for the folder.
 """
 
 import argparse
@@ -96,7 +96,7 @@ class Macrostate:
 
 
 class Microstate:
-    """magnetic_states.h5, the full m: per stage an extendable stack of m with its times or fields; float64, shuffle + gzip (D28)."""
+    """trajectory.h5, the full m: per stage an extendable stack of m with its times or fields; float64, shuffle + gzip (D28)."""
 
     def __init__(self, path, card):
         self.f = h5py.File(path, "w")
@@ -209,7 +209,7 @@ def run(card, out, device=None):
         return [*m[:, magnetic].mean(axis=1), *e, sum(e)]
 
     save()
-    micro = Microstate(out / "magnetic_states.h5", card)
+    micro = Microstate(out / "trajectory.h5", card)
     try:
         for k, stage in enumerate(card.stages, 1):
             start = time.perf_counter()

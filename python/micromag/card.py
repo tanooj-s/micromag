@@ -75,7 +75,7 @@ class Card:
     K: float
     axis: np.ndarray
     m0: np.ndarray | None  # uniform start, normalised
-    file: Path | None      # or a magnetic_states.h5 to start from ...
+    file: Path | None      # or a trajectory.h5 to start from ...
     state: str             # ... and which state in it
     stages: list
     regions: list          # ordered; later boxes win (D30)
@@ -273,7 +273,7 @@ def load(path):
         "m": (_direction, None), "file": (_string, None), "state": (_string, None),
     }, "[initial]", errors)
     if (initial["m"] is None) == (initial["file"] is None):
-        errors.append("[initial]: give exactly one of 'm' (a uniform direction) or 'file' (a magnetic_states.h5)")
+        errors.append("[initial]: give exactly one of 'm' (a uniform direction) or 'file' (a trajectory.h5)")
     if initial["state"] is not None and (initial["file"] is None or not re.fullmatch(r"final|stage[1-9][0-9]*", initial["state"])):
         errors.append("[initial]: 'state' goes with 'file' and must be \"final\" or \"stage<k>\"")
 

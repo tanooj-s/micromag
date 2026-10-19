@@ -76,7 +76,7 @@ def test_results_folder_layout_and_provenance(done):
     card, out = done
     prov = json.loads((out / "provenance.json").read_text())
     dirty = prov["git"] is not None and prov["git"]["dirty"]
-    expected = ["card.toml", "provenance.json", "magnetic_states.h5",
+    expected = ["card.toml", "provenance.json", "trajectory.h5",
                 "stage1_llg-dynamics.csv", "stage2_minimize.csv", "stage3_hysteresis.csv"] + (["git.diff"] if dirty else [])
     assert sorted(p.name for p in out.iterdir()) == sorted(expected)
     assert (out / "card.toml").read_bytes() == card.read_bytes()
@@ -108,10 +108,10 @@ def test_macrostate_rows_record_the_field_actually_applied(done):
     assert np.abs(llg[-1, 4:7] - llg[0, 4:7]).max() > 0.01  # m really moved
 
 
-def test_magnetic_states_dump(done):
+def test_trajectory_dump(done):
     _, out = done
     _, hy = macrostate(out / "stage3_hysteresis.csv")
-    with h5py.File(out / "magnetic_states.h5") as f:
+    with h5py.File(out / "trajectory.h5") as f:
         assert list(f.attrs["n"]) == [4, 3, 2] and np.allclose(f.attrs["cell"], 2e-9)
         s1, s2, s3 = f["stage1"], f["stage2"], f["stage3"]
         assert s1.attrs["type"] == "llg-dynamics" and s1["m"].shape == (3, 3, 2, 3, 4)  # t = 0, 10, 20 ps
@@ -129,24 +129,24 @@ def restart(tmp_path, initial):
     card.write_text(HEAD + initial + '\n[[stage]]\ntype = "minimize"\ntorque_tol = 1e9\n')  # returns at once
     out = tmp_path / card.stem
     run(card, out)
-    with h5py.File(out / "magnetic_states.h5") as f:
+    with h5py.File(out / "trajectory.h5") as f:
         return f["final"]["m"][:], json.loads((out / "provenance.json").read_text())
 
 
 def test_restart_from_a_saved_state(done, tmp_path):
     _, first = done
-    with h5py.File(first / "magnetic_states.h5") as f:
+    with h5py.File(first / "trajectory.h5") as f:
         final, stage1 = f["final"]["m"][:], f["stage1"]["m"][-1]
-    m, prov = restart(tmp_path, '[initial]\nfile = "run/magnetic_states.h5"\n')  # relative to the card
+    m, prov = restart(tmp_path, '[initial]\nfile = "run/trajectory.h5"\n')  # relative to the card
     assert np.array_equal(m, final)  # float64 in, float64 out: exact (D28)
-    assert prov["initial"]["sha256"] == hashlib.sha256((first / "magnetic_states.h5").read_bytes()).hexdigest()
-    m, _ = restart(tmp_path, '[initial]\nfile = "run/magnetic_states.h5"\nstate = "stage1"\n')
+    assert prov["initial"]["sha256"] == hashlib.sha256((first / "trajectory.h5").read_bytes()).hexdigest()
+    m, _ = restart(tmp_path, '[initial]\nfile = "run/trajectory.h5"\nstate = "stage1"\n')
     assert np.array_equal(m, stage1)
 
 
 def test_restart_rejects_a_grid_mismatch_before_writing(done, tmp_path):
     card = tmp_path / "other.toml"
-    card.write_text(HEAD.replace("[4, 3, 2]", "[4, 3, 1]") + '[initial]\nfile = "run/magnetic_states.h5"\n'
+    card.write_text(HEAD.replace("[4, 3, 2]", "[4, 3, 1]") + '[initial]\nfile = "run/trajectory.h5"\n'
                     + '[[stage]]\ntype = "minimize"\n')
     with pytest.raises(CardError, match="grid"):
         run(card, tmp_path / "other")
@@ -208,7 +208,7 @@ max_duration = 3e-12
     assert prov["status"] == "failed" and "max_duration" in prov["error"]
     _, rows = macrostate(out / "stage1_llg-dynamics.csv")
     assert np.allclose(rows[:, 0], [0, 1e-12, 2e-12, 3e-12], rtol=0, atol=1e-24)
-    with h5py.File(out / "magnetic_states.h5") as f:
+    with h5py.File(out / "trajectory.h5") as f:
         assert f["failed"]["m"].shape == (3, 2, 3, 4) and "final" not in f
         assert np.allclose(f["failed"]["m"][:].reshape(3, -1).mean(axis=1), rows[-1, 4:7], rtol=0, atol=1e-15)
     assert main(["run", str(card), "-o", str(tmp_path / "again")]) == 1

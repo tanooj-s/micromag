@@ -80,7 +80,7 @@ Discussed and saved for later. 6b uses interim boxes (D30).
   - A cell belongs to a shape if its centre is inside.
   - A check compares each shape's exact volume with its volume in cells.
   - Coordinates are measured from the grid's lower corner.
-  - The map is saved in `magnetic_states.h5`.
+  - The map is saved in `trajectory.h5`.
 - **Interphase between grains: two physical models.**
   - **(1) A volume layer** with its own Ms, A and K: the paper's 3 nm coat per grain, giving 6 nm between grains and 3 nm at the outer surface. It would be a `shell` operation using a distance transform (e.g. `scipy.ndimage`). It needs no solver change and requires a thickness of at least 2 cells.
   - **(2) A zero-thickness coupling scaled per region pair** (MuMax3, OOMMF). This is an exchange-kernel change on both backends, worth it only for boundaries thinner than a cell.
@@ -543,7 +543,7 @@ Source: https://www.ctcms.nist.gov/~rdm/std2/spec2.html and `results.html` (fetc
     - optional `device` (default "cpu")
     - `[grid]`: `n` (cells) and `cell` (m)
     - `[material]`: `Ms` (A/m) and `A` (J/m), plus optional `K` (J/m³, default 0) and `axis` (default [0, 0, 1])
-    - `[initial]`: exactly one of `m = [...]` (uniform, normalised on load) or `file` pointing to a `magnetic_states.h5`. A file takes an optional `state`: `"final"` (the default), or `"stage<k>"` for the last snapshot of stage k. The path is relative to the card. The file's SHA-256 is recorded, and its grid must match the card's.
+    - `[initial]`: exactly one of `m = [...]` (uniform, normalised on load) or `file` pointing to a `trajectory.h5`. A file takes an optional `state`: `"final"` (the default), or `"stage<k>"` for the last snapshot of stage k. The path is relative to the card. The file's SHA-256 is recorded, and its grid must match the card's.
   - **Stages:** an ordered list of `[[stage]]` entries, run top to bottom. The card has no variables, loops or conditionals; sweeps belong to 6b.
   - **Units:** SI throughout. Applied fields are `mu0_H`, µ₀H_ext in tesla, because every reference quotes T or mT.
   - **What carries over:** the magnetisation always carries over between stages, as an MD configuration does. The applied field is **stage-local**: it defaults to zero and is never carried over. Every thermo row records the field it was computed at.
@@ -579,7 +579,7 @@ Source: https://www.ctcms.nist.gov/~rdm/std2/spec2.html and `results.html` (fetc
       - `llg-dynamics`: `t, mu0_Hx, mu0_Hy, mu0_Hz, mx, my, mz, E_exchange, E_anisotropy, E_zeeman, E_demag, E_total, steps, rejected`.
       - `minimize` and `hysteresis`: `mu0_Hx, mu0_Hy, mu0_Hz, mx, my, mz`, the same energies, and `iterations`.
       - ⟨m⟩ is averaged over magnetic cells. Time restarts at 0 in each stage. Energies are in J and always recorded; computing them costs about 25% extra at SP4's 1 ps sampling, so make them optional only if profiling says so.
-    - **Dump** (like a LAMMPS dump file): `magnetic_states.h5`, written with h5py.
+    - **Dump** (like a LAMMPS dump file): `trajectory.h5`, written with h5py.
       - Data: float64, so restarts are exact, compressed losslessly with shuffle + gzip.
       - Group `stage<k>`: an extendable `m` stack (n, 3, nz, ny, nx), with `t` (`llg-dynamics`) or `mu0_H` (`minimize`, `hysteresis`) per snapshot. The default is one snapshot at the end of the stage; `dump_every` or `dump = true` adds more.
       - Groups `final` and, on failure, `failed`.
@@ -595,6 +595,7 @@ Source: https://www.ctcms.nist.gov/~rdm/std2/spec2.html and `results.html` (fetc
   - A single `thermo.csv` with a stage column: blank cells, and rows to filter.
   - A default output folder with a timestamp: fills up with unnamed runs.
   - Refusing to run on a dirty tree: blocks everyday work.
+- **Renamed (user, 2026-10-18):** the dump file is `trajectory.h5` (it was `magnetic_states.h5`). A restart card points `[initial] file` at a run's `trajectory.h5`.
 - **Refinement (2026-10-18, implementation):**
   - A restart checks that the cell counts `n` match. The cell size may differ, so a state can be rescaled onto another cell size, as SP3's bisection does.
   - The hysteresis stage runs its own loop in `run.py` rather than calling `mm.hysteresis`, so each row is written and flushed as it happens. `mm.hysteresis` stays as the in-memory API.
@@ -621,7 +622,7 @@ Source: https://www.ctcms.nist.gov/~rdm/std2/spec2.html and `results.html` (fetc
 - **Result (2026-10-18):**
   - `uv run pytest`: 67 passed, 30 skipped (CUDA), 5 deselected (slow). The 24 new workflow tests take 0.6 s.
   - `examples/sp4.toml` through `run()` reproduces the direct test exactly: S-state ⟨m⟩ = (0.9670, 0.1253, 0.0000) after 2.80 ns, crossing at 138.6 ps, RMS 0.0051, 1979 steps with 1 rejected, 25 s on the laptop CPU.
-  - Through the command line, the results folder holds `card.toml`, `provenance.json`, `git.diff` (the tree was dirty), two thermo CSVs (10 kB and 194 kB) and a 281 kB `magnetic_states.h5`. A second run into the same folder exits with code 2 and writes nothing.
+  - Through the command line, the results folder holds `card.toml`, `provenance.json`, `git.diff` (the tree was dirty), two thermo CSVs (10 kB and 194 kB) and a 281 kB `trajectory.h5`. A second run into the same folder exits with code 2 and writes nothing.
 - **Mutation check:** each bug was planted alone, and each was caught.
   - The field carried over unless a stage set a non-zero one: caught by the Zeeman-energy check in the thermo test, which compares the energy against the recorded field.
   - `tol` checked against `until_torque` instead of `until_torque/100`: caught by the validation test.

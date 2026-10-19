@@ -81,7 +81,7 @@ def test_alpha_must_be_a_nonnegative_number(tmp_path, value):
 
 
 def test_initial_state_needs_exactly_one_source(tmp_path):
-    both = GRID.replace('m = [1, 1, 1]', 'm = [1, 1, 1]\nfile = "run/magnetic_states.h5"')
+    both = GRID.replace('m = [1, 1, 1]', 'm = [1, 1, 1]\nfile = "run/trajectory.h5"')
     neither = GRID.replace('m = [1, 1, 1]', '')
     assert "initial" in errors(tmp_path, LLG, both)
     assert "initial" in errors(tmp_path, LLG, neither)
