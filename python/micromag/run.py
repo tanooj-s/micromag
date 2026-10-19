@@ -60,7 +60,9 @@ def _initial_state(card):
     """m to start from (3, nz, ny, nx), and its provenance entry. Raises CardError before anything is written."""
     nx, ny, nz = card.n
     if card.m0 is not None:
-        return np.ascontiguousarray(np.broadcast_to(card.m0[:, None, None, None], (3, nz, ny, nx))), {"m": card.m0.tolist()}
+        m = np.empty((3, nz, ny, nx))  # a fresh writable array: a broadcast view of a 1-cell grid would be read-only
+        m[:] = card.m0[:, None, None, None]
+        return m, {"m": card.m0.tolist()}
     try:
         f = h5py.File(card.file, "r")
     except OSError as e:
@@ -128,6 +130,26 @@ class Microstate:
         self.f.close()
 
 
+def materials(card):
+    """Per-cell Ms, A, K (nz, ny, nx) and axis (3, nz, ny, nx): [material] everywhere, then each [[region]] box in
+    order over the cells whose centre lies inside it, lower bound included (D30)."""
+    nx, ny, nz = card.n
+    dx, dy, dz = card.cell
+    s = (nz, ny, nx)
+    values = {"Ms": np.full(s, card.Ms), "A": np.full(s, card.A), "K": np.full(s, card.K), "axis": np.empty((3, *s))}
+    values["axis"][:] = card.axis[:, None, None, None]
+    z, y, x = np.meshgrid((np.arange(nz) + 0.5) * dz, (np.arange(ny) + 0.5) * dy, (np.arange(nx) + 0.5) * dx, indexing="ij")
+    for r in card.regions:
+        (x0, y0, z0), (x1, y1, z1) = r.box
+        inside = (x0 <= x) & (x < x1) & (y0 <= y) & (y < y1) & (z0 <= z) & (z < z1)
+        for key, v in r.values.items():
+            if key == "axis":
+                values["axis"][:, inside] = v[:, None]
+            else:
+                values[key][inside] = v
+    return values["Ms"], values["A"], values["K"], values["axis"]
+
+
 def _schedule(end, rows_every, dump_every):
     """[(t, row, dump)] in time order: rows at 0, every rows_every and at end; dumps every dump_every from 0, and at end."""
     marks = [(0.0, True, False), (end, True, True)]
@@ -158,10 +180,7 @@ def run(card, out, device=None):
     device = device or card.device
 
     nx, ny, nz = card.n
-    s = (nz, ny, nx)
-    one = np.ones(s)
-    axis = np.ascontiguousarray(np.broadcast_to(card.axis[:, None, None, None], (3, *s)))
-    prob = Problem(Grid(nx, ny, nz, *card.cell), card.Ms * one, card.A * one, card.K * one, axis, (0, 0, 0), device=device)
+    prob = Problem(Grid(nx, ny, nz, *card.cell), *materials(card), (0, 0, 0), device=device)
     magnetic = prob.Ms > 0
 
     out.mkdir(parents=True, exist_ok=True)
@@ -197,7 +216,7 @@ def run(card, out, device=None):
             macro = Macrostate(out / f"stage{k}_{stage.type}.csv", COLUMNS[stage.type])
             group = micro.stage(k, stage.type)
             try:
-                summary = _run_stage(stage, prob, m, magnetic, measure, macro, micro, group)
+                summary, extra = _run_stage(stage, prob, m, magnetic, measure, macro, micro, group)
             except Exception as e:
                 micro.single("failed", m)
                 prov.update(status="failed", error=f"stage {k} ({stage.type}): {e}", finished=_now())
@@ -207,7 +226,7 @@ def run(card, out, device=None):
             finally:
                 macro.close()
             wall = time.perf_counter() - start
-            prov["stages"].append({"type": stage.type, "wall_s": wall})
+            prov["stages"].append({"type": stage.type, "wall_s": wall, **extra})
             save()
             print(f"stage {k}/{len(card.stages)} {stage.type}: {summary} ({wall:.1f} s)", flush=True)
         micro.single("final", m)
@@ -221,16 +240,7 @@ def run(card, out, device=None):
 def _run_stage(stage, prob, m, magnetic, measure, macro, micro, group):
     """Runs one stage on m in place, writing its rows and snapshots. Returns the progress-line summary."""
     if isinstance(stage, Hysteresis):
-        mn, total = Minimizer(prob), 0
-        fields = stage.fields_T()
-        for i, B in enumerate(fields):
-            prob.H_ext = tuple(B / mu0)
-            it = mn.minimize(m, stage.torque_tol, stage.max_iter)
-            total += it
-            macro.row([*B, *measure(), it])
-            if stage.dump or i == len(fields) - 1:
-                micro.append(group, m, B)
-        return f"{len(fields)} fields, µ0H {stage.mu0_H_from:g} → {stage.mu0_H_to:g} T along {np.round(stage.direction, 4).tolist()}, {total} iterations"
+        return _hysteresis(stage, prob, m, magnetic, measure, macro, micro, group)
 
     prob.H_ext = tuple(stage.mu0_H / mu0)  # stage-local: every stage sets its own field, zero by default (D27)
     field = f"µ0H = {stage.mu0_H.tolist()} T"
@@ -238,7 +248,7 @@ def _run_stage(stage, prob, m, magnetic, measure, macro, micro, group):
         it = Minimizer(prob).minimize(m, stage.torque_tol, stage.max_iter)
         macro.row([*stage.mu0_H, *measure(), it])
         micro.append(group, m, stage.mu0_H)
-        return f"{it} iterations at {field}"
+        return f"{it} iterations at {field}", {}
 
     assert isinstance(stage, LLGDynamics)
     llg = LLG(prob, stage.alpha, gamma=stage.gamma, tol=stage.tol, max_step=stage.max_step)
@@ -262,7 +272,56 @@ def _run_stage(stage, prob, m, magnetic, measure, macro, micro, group):
             micro.append(group, m, t)
         if done:
             break
-    return f"{llg.t * 1e9:.3f} ns, {llg.steps} steps, {llg.rejected} rejected, at {field}"
+    return f"{llg.t * 1e9:.3f} ns, {llg.steps} steps, {llg.rejected} rejected, at {field}", {}
+
+
+def _hysteresis(stage, prob, m, magnetic, measure, macro, micro, group):
+    """The ramp of fields_T(), minimizing at each field (D22). With refine_to, a step that crosses m·h = 0 or makes
+    <m> jump by more than refine_jump is undone and halved, down to refine_to; the ramp then resumes (D31)."""
+    h = stage.direction
+    grid = stage.fields_T() @ h  # field values along h, from -> to
+    mn = Minimizer(prob)
+    rows, iterations = [], 0     # (field along h, <m>) of every accepted field
+
+    def settle(b):
+        nonlocal iterations
+        prob.H_ext = tuple(b * h / mu0)
+        iterations += mn.minimize(m, stage.torque_tol, stage.max_iter)
+        return m[:, magnetic].mean(axis=1)
+
+    def accept(b, mean):
+        rows.append((b, mean))
+        macro.row([*(b * h), *measure(), iterations])
+        if stage.dump or b == grid[-1]:
+            micro.append(group, m, b * h)
+
+    accept(grid[0], settle(grid[0]))
+    for target in grid[1:]:
+        while rows[-1][0] != target:
+            b0, mean0 = rows[-1]
+            saved, trial = m.copy(), target
+            while True:
+                mean = settle(trial)
+                event = np.sign(mean0 @ h) != np.sign(mean @ h) or np.linalg.norm(mean - mean0) > stage.refine_jump
+                if stage.refine_to is None or not event or abs(trial - b0) <= stage.refine_to:
+                    break
+                m[...] = saved  # undo the step and try half of it
+                trial = b0 + (trial - b0) / 2
+            accept(trial, mean)
+
+    b = np.array([r[0] for r in rows])
+    mh = np.array([r[1] @ h for r in rows])
+    jumps = np.linalg.norm(np.diff([r[1] for r in rows], axis=0), axis=1)
+    i = next((k for k in range(len(mh) - 1) if np.sign(mh[k]) != np.sign(mh[k + 1])), None)
+    zero = np.flatnonzero(np.abs(b) <= 1e-9 * stage.mu0_H_step)
+    summary = {
+        "Hc_T": None if i is None else float(b[i] + (b[i + 1] - b[i]) * mh[i] / (mh[i] - mh[i + 1])),
+        "switch_T": None if len(jumps) == 0 else float((b[jumps.argmax()] + b[jumps.argmax() + 1]) / 2),
+        "remanence": rows[zero[0]][1].tolist() if len(zero) else None,
+    }
+    fmt = lambda v: "none" if v is None else f"{v:.4g} T"
+    return (f"{len(rows)} fields, µ0H {stage.mu0_H_from:g} → {stage.mu0_H_to:g} T along {np.round(h, 4).tolist()}, "
+            f"{iterations} iterations; Hc {fmt(summary['Hc_T'])}, switching {fmt(summary['switch_T'])}"), {"summary": summary}
 
 
 def main(argv=None):
@@ -282,3 +341,4 @@ def main(argv=None):
         print(f"micromag: run failed: {e}", file=sys.stderr)
         return 1
     return 0
+

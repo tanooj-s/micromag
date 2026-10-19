@@ -1,0 +1,25 @@
+# µMAG standard problem 2 (https://www.ctcms.nist.gov/~rdm/std2/spec2.html), here at d/l_ex = 30.
+# A film of width d, thickness t = 0.1 d and length L = 5 d; exchange and demag only; field along [1,1,1].
+# Permalloy-like Ms and A give l_ex = sqrt(A / (µ0 Ms²/2)) = 5.6858 nm and µ0 Ms = 1.00531 T.
+# Other sizes (D32): cell = min(0.5 l_ex, t) in all three directions, n = (5 d, d, t) / cell. For d/l_ex = 10:
+# n = [100, 20, 2]. The run's provenance.json gives Hc_T and the remanence; Hc/Ms = |Hc_T| / 1.00531 T.
+# About 10^5 cells: run it on a GPU (micromag run sp2.toml -o runs/sp2_d30 --device cuda).
+
+[grid]
+n    = [300, 60, 6]
+cell = [2.8429011509170188e-09, 2.8429011509170188e-09, 2.8429011509170188e-09]  # 0.5 l_ex
+
+[material]
+Ms = 8e5        # A/m
+A  = 1.3e-11    # J/m
+
+[initial]
+m = [1, 1, 1]   # saturated along the field
+
+[[stage]]       # from +0.1 Ms down through remanence to -0.08 Ms (fields as µ0 H, T)
+type = "hysteresis"
+direction  = [1, 1, 1]
+mu0_H_from = 0.1005309649148734
+mu0_H_to   = -0.08042477193189872
+mu0_H_step = 0.00502654824574367
+refine_to  = 1e-5

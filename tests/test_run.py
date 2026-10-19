@@ -11,7 +11,8 @@ import pytest
 
 import micromag as mm
 from micromag.card import CardError
-from micromag.run import git_state, main, run
+from micromag.card import load
+from micromag.run import git_state, main, materials, run
 from test_llg import SP4_REF, first_zero_crossing
 
 HEAD = """
@@ -232,3 +233,70 @@ def test_sp4_card_matches_oommf(tmp_path):
     assert np.abs(m0 - m_ref[0]).max() <= 0.01
     assert abs(t_cross / t_cross_ref - 1) <= 0.03
     assert rms <= 0.05
+
+
+def test_regions_paint_cell_centres_in_order(tmp_path):
+    # D30: a cell takes a box's values if its centre is inside (lower bound included); later boxes win.
+    path = tmp_path / "card.toml"
+    path.write_text(HEAD.replace("K = 5e5", "K = 0") + """
+[initial]
+m = [0, 0, 1]
+
+[[region]]
+box = [[2e-9, 0, 0], [8e-9, 6e-9, 4e-9]]
+K = 1e5
+axis = [1, 0, 0]
+
+[[region]]
+box = [[0, 0, 2e-9], [4e-9, 6e-9, 4e-9]]
+Ms = 0
+
+[[stage]]
+type = "minimize"
+""")
+    Ms, A, K, axis = materials(load(path))
+    x_in = np.array([False, True, True, True])            # cell centres at 1, 3, 5, 7 nm; box from 2 nm
+    assert np.array_equal(K, np.where(x_in, 1e5, 0.0) * np.ones((2, 3, 1)))
+    assert np.array_equal(axis[0], np.where(x_in, 1.0, 0.0) * np.ones((2, 3, 1)))
+    assert np.array_equal(axis[2], np.where(x_in, 0.0, 1.0) * np.ones((2, 3, 1)))
+    vacuum = np.zeros((2, 3, 4), bool)
+    vacuum[1, :, :2] = True                                # z centre 3 nm, x centres 1 and 3 nm
+    assert np.array_equal(Ms, np.where(vacuum, 0.0, MS)) and np.all(A == 1.3e-11)
+
+
+@pytest.mark.parametrize("psi, hc, hsw", [(30, 0.5240, 0.5240), (60, 0.4330, 0.5240)])
+def test_refined_hysteresis_reports_coercive_and_switching_fields(tmp_path, capsys, psi, hc, hsw):
+    # One cubic cell is a Stoner–Wohlfarth particle (D23). For psi <= 45° the coercive field (m·h = 0) is the
+    # switching field; above 45° m passes through m ⟂ h first, at h_c = sin(2 psi)/2, and switches later (D31).
+    BK = 2 * 5e5 / MS  # µ0 H_K = 2K/Ms, in T
+    s, c = float(np.sin(np.radians(psi))), float(np.cos(np.radians(psi)))
+    card = tmp_path / "card.toml"
+    card.write_text(f"""
+[grid]
+n = [1, 1, 1]
+cell = [2e-9, 2e-9, 2e-9]
+
+[material]
+Ms = 8e5
+A = 1e-11
+K = 5e5
+
+[initial]
+m = [0, 0, 1]
+
+[[stage]]
+type = "hysteresis"
+direction = [{s!r}, 0.0, {c!r}]
+mu0_H_from = 0.0
+mu0_H_to = -0.75
+mu0_H_step = 0.05
+refine_to = 1e-4
+""")
+    run(card, tmp_path / "run")
+    summary = json.loads((tmp_path / "run" / "provenance.json").read_text())["stages"][0]["summary"]
+    assert abs(summary["switch_T"] + hsw * BK) <= 2e-4, summary
+    assert abs(summary["Hc_T"] + hc * BK) <= 2e-4, summary
+    assert np.allclose(summary["remanence"], [0, 0, 1], rtol=0, atol=1e-6)
+    _, rows = macrostate(tmp_path / "run" / "stage1_hysteresis.csv")
+    assert len(rows) < 60  # 16 coarse fields plus two bisections, not 7500 fine steps
+    assert "Hc" in capsys.readouterr().out

@@ -28,7 +28,7 @@ def card(tmp_path, stages, head=GRID):
 def errors(tmp_path, stages, head=GRID):
     with pytest.raises(CardError) as e:
         card(tmp_path, stages, head)
-    return str(e.value)
+    return str(e.value).split("\n", 1)[1]  # drop the path line: test directory names would match anything
 
 
 LLG = """
@@ -120,3 +120,54 @@ mu0_H_step = 0.1
     assert np.allclose(s.fields_T(), np.outer([0.1, 0.0, -0.1, -0.2, -0.3, -0.4], [0, 0.6, -0.8]), rtol=0, atol=1e-15)
     assert s.dump is False and s.torque_tol == 1e-6 and s.max_iter == 100_000
     assert "mu0_H_step" in errors(tmp_path, ramp.replace("mu0_H_step = 0.1", "mu0_H_step = 0.3"))  # 0.5 / 0.3 is not whole
+
+
+REGIONS = GRID + """
+[[region]]
+box = [[2e-9, 0, 0], [8e-9, 6e-9, 4e-9]]
+K = 1e5
+axis = [1, 0, 0]
+
+[[region]]
+box = [[0, 0, 2e-9], [4e-9, 6e-9, 4e-9]]
+Ms = 0
+"""
+
+
+def test_regions_parse_in_order(tmp_path):
+    c = card(tmp_path, LLG, REGIONS)
+    r1, r2 = c.regions
+    assert np.allclose(r1.box, [[2e-9, 0, 0], [8e-9, 6e-9, 4e-9]], rtol=0, atol=0)
+    assert set(r1.values) == {"K", "axis"} and r1.values["K"] == 1e5 and np.array_equal(r1.values["axis"], [1, 0, 0])
+    assert r2.values == {"Ms": 0.0}  # Ms = 0 is vacuum, allowed in a region (D30)
+    assert card(tmp_path, LLG).regions == []
+
+
+@pytest.mark.parametrize("box, what", [
+    ("[[0, 0, 0], [1e-9, 1e-9]]", "box"),
+    ("[[2e-9, 0, 0], [1e-9, 1e-9, 1e-9]]", "box"),  # upper corner below lower corner
+])
+def test_region_box_is_checked(tmp_path, box, what):
+    assert what in errors(tmp_path, LLG, GRID + f"[[region]]\nbox = {box}\nK = 1.0\n")
+
+
+def test_region_errors_name_the_problem(tmp_path):
+    assert "Kk" in errors(tmp_path, LLG, GRID + "[[region]]\nbox = [[0, 0, 0], [1e-9, 1e-9, 1e-9]]\nKk = 1.0\n")
+    assert "region 1" in errors(tmp_path, LLG, GRID + "[[region]]\nbox = [[0, 0, 0], [1e-9, 1e-9, 1e-9]]\n")  # sets nothing
+    assert "Ms" in errors(tmp_path, LLG, GRID + "[[region]]\nbox = [[0, 0, 0], [1e-9, 1e-9, 1e-9]]\nMs = -1.0\n")
+
+
+def test_refinement_keys(tmp_path):
+    ramp = """
+[[stage]]
+type = "hysteresis"
+direction = [0, 0, 1]
+mu0_H_from = 0.0
+mu0_H_to = -1.0
+mu0_H_step = 0.1
+"""
+    (s,) = card(tmp_path, ramp).stages
+    assert s.refine_to is None and s.refine_jump == 0.1
+    (s,) = card(tmp_path, ramp + "refine_to = 1e-4\nrefine_jump = 0.05\n").stages
+    assert s.refine_to == 1e-4 and s.refine_jump == 0.05
+    assert "refine_to" in errors(tmp_path, ramp + "refine_to = 0.2\n")  # coarser than the step itself

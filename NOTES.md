@@ -12,14 +12,16 @@ Each iteration is done when its check passes and its decisions are logged below.
 | 4 | Minimizer: projected steepest descent with Barzilai–Borwein steps (eqs. 22–23), plus a hysteresis driver | Stoner–Wohlfarth astroid: switching fields at ψ = 15–75° within 2·10⁻³ H_K of `(cos^{2/3}ψ + sin^{2/3}ψ)^{−3/2}`; µMAG SP3 (20³): flower/vortex crossover L within 0.5% of 8.47 l_ex (D23) | ✅ CPU (`tests/test_minimizer.py`; SP3 with `-m slow`) |
 | 5 | GPU backend: CUDA kernels + cuFFT; the backend interface is introduced here | Every test passes with `device="cuda"` and the direct CPU-vs-GPU comparisons hold their D26 tolerances, run on at least one CUDA GPU of sm_70 or newer (which GPU is recorded). Nsight roofline numbers are optional (D25) | ✅ CPU + GPU (Tesla T4, CUDA 13.0, Colab, 2026-10-18; D26 Result) |
 | 6a | Workflow: one simulation from a TOML input card into a results folder (per-stage CSV thermo tables, an HDF5 dump of magnetic states, provenance) through `micromag run` and `micromag.run()` (D27, D28). **Requirement (user, 2026-10-17):** a simple local workflow, parameters in → results out, from an input file, without hand-editing a Python script, with the same entry point on any machine | `examples/sp4.toml` run through `run()` meets D20's SP4 criteria; fast tests of validation, the results folder, restarts, dumps and failure handling (D29) | ✅ (`tests/test_card.py`, `tests/test_run.py`; SP4 card with `-m slow`) |
-| 6b | Science runs: interim box material regions, field refinement near switching, a hysteresis summary (H_c, switching field, remanence), on a GPU; scaling study and Nsight optional (D25, D30, D31) | µMAG SP2 H_c and remanence vs d/l_ex against the exact limit and OOMMF 1.1; the pure 40 nm Nd₂Fe₁₄B cube against Fischbacher et al. 2017 (5.29 T); the Fig. 8a core–shell cube against the paper's finest-mesh curve (D32) | **in progress**: design settled 2026-10-18 |
+| 6b | Science runs: interim box material regions, field refinement near switching, a hysteresis summary (H_c, switching field, remanence), on a GPU; scaling study and Nsight optional (D25, D30, D31) | µMAG SP2 H_c and remanence vs d/l_ex against the exact limit and OOMMF 1.1; the pure 40 nm Nd₂Fe₁₄B cube against Fischbacher et al. 2017 (5.29 T); the Fig. 8a core–shell cube against the paper's finest-mesh curve (D32) | CPU checks ✅ (`tests/test_coercivity.py`, `-m slow`); the CUDA-only sizes and the recorded runs need a GPU |
 | 6c | An original study using the 6b tools: a question the paper only touches (e.g. shell thickness or anisotropy, field angle, a corner defect) | Set in the 6c design, after 6b is validated | todo |
 | 7 | Stretch, pick one: Voronoi grains / string method (NEB) / multi-GPU / thermal field | — | — |
 
 ## Resume here
 State on 2026-10-18: iterations 1–5 are done. Iteration 5 passes on a Tesla T4 (Colab, CUDA 13.0; D26 Result). `uv run pytest` on the laptop gives 43 passed, 30 skipped (the CUDA cases) and 4 deselected (slow).
 - **2026-10-18:** iteration 6 was split into 6a and 6b; 6a is done (D27–D29). Run a card with `uv run micromag run examples/sp4.toml -o runs/sp4` (`runs/` is git-ignored).
-- **Next:** iteration 6b implementation (design D30–D32, settled 2026-10-18): tests first, then implement. The large runs (SP2 d/l_ex = 20 and 30, the 50 nm cube, the full SP2 curve, the 100 nm cube) need a GPU (Colab recipe above). The cluster remains an optional GPU target (D25); its build needs the numpy cap (see the optional open issue below).
+- **User plan (2026-10-18):** start using the code to run simulations and log results within 24 hours, i.e. by 2026-10-19. Priority: make the run-and-record workflow (cards → `micromag run` → results folders) dependable for that.
+- **Slow suite (user choice, 2026-10-18):** the cube checks stay on both devices (D32), even though they take about 11 minutes on the laptop CPU; `-m slow` is opt-in.
+- **Next:** iteration 6b on a GPU: `uv run pytest -m slow -k coercivity -s` on Colab (SP2 at d/l_ex = 20 and 30, the 50 nm cube), then the recorded runs `examples/sp2.toml` (and the other SP2 sizes) and `examples/cube_core_shell.toml`. 6b's CPU checks pass (D32 Result). The large runs (SP2 d/l_ex = 20 and 30, the 50 nm cube, the full SP2 curve, the 100 nm cube) need a GPU (Colab recipe above). The cluster remains an optional GPU target (D25); its build needs the numpy cap (see the optional open issue below).
 - **CUDA compile check without a GPU** (rerun after CUDA changes), from the repo root, with Docker Desktop for Apple Silicon:
   ```
   docker run --rm -v "$PWD":/src -w /src -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e SKBUILD_CMAKE_DEFINE=MICROMAG_CUDA=ON \
@@ -165,6 +167,7 @@ Source: https://www.ctcms.nist.gov/~rdm/std2/spec2.html and `results.html` (fetc
 
 - **MagTense** (Bjørk et al., 100×20×3 cells at every size): H_c/Ms = 0.05705 at d/l_ex = 3.00, 0.04938 at 20.36, 0.04558 at 30.00. It agrees with OOMMF 1.1 to about 0.8%.
 - **The older OOMMF 1.0 submission** is off in the small-particle limit because of its demag model (Donahue's note).
+- **Ours (iteration 6b, CPU, cell = min(0.5 l_ex, t)):** H_c/Ms = 0.05704 at d/l_ex = 1 and 0.05446 at 10; remanence (1.0000, 0.0000) and (0.9989, 0.0000). The larger sizes are pending a GPU.
 
 ### Nd₂Fe₁₄B cubes: switching and coercive fields
 - **Pure 40 nm cube** (Fischbacher et al., APL 111, 072404 (2017), arXiv:1708.01880):
@@ -174,6 +177,7 @@ Source: https://www.ctcms.nist.gov/~rdm/std2/spec2.html and `results.html` (fetc
   - setup: core K = 4.9 MJ/m³, µ₀Ms = 1.61 T, A = 8 pJ/m; a 3 nm shell with K = 0, µ₀Ms = 0.477 T, A = 6.12 pJ/m. The field direction is not stated.
   - results, read off the figure at 600 dpi on the finest mesh (1.3 nm): µ₀H_c ≈ 2.76 T at 25 nm, 2.71 T at 50 nm, 2.58 T at 100 nm.
   - mesh dependence: the 4 nm mesh sits up to 0.13 T higher, and the curve falls by about 0.002 T per nm.
+- **Ours (iteration 6b, CPU, field 1° off z):** the pure 40 nm cube (cells of 1.33 nm) switches at 5.275 T (−0.3%); the 25 nm core–shell cube (1 nm cells) has H_c = 2.721 T (Fig. 8a: 2.76 T).
 
 ## Decision log
 <!-- Format, one entry per decision:
@@ -587,6 +591,7 @@ Source: https://www.ctcms.nist.gov/~rdm/std2/spec2.html and `results.html` (fetc
   - The hysteresis stage runs its own loop in `run.py` rather than calling `mm.hysteresis`, so each row is written and flushed as it happens. `mm.hysteresis` stays as the in-memory API.
   - Floats are written to the CSV with `repr`, so a value read back is exactly the value computed.
   - `git_state` counts untracked files as dirty, but `git diff HEAD` does not include them.
+- **Correction (2026-10-18, found by a 6b test):** for a 1×1×1 grid, `np.ascontiguousarray(np.broadcast_to(...))` returns the read-only broadcast view itself, so the starting m (and the axis array) could not be written and the minimizer rejected it. Both are now built with `np.empty` and filled in.
 - **Consequence:** h5py becomes a dependency. Its Linux wheels need glibc ≥ 2.28, so the optional cluster build needs a cap, like numpy. 6b's sweeps write one such folder per run.
 
 ### D29: Iteration-6a checks (2026-10-18)
@@ -664,3 +669,19 @@ Source: https://www.ctcms.nist.gov/~rdm/std2/spec2.html and `results.html` (fetc
   - the full SP2 curve as a test: tens of minutes on a GPU
   - a fixed cell count for SP2 (as MagTense did): cells of 1.5 l_ex at d/l_ex = 30
 - **Consequence:** the roadmap check for 6b was reworded to match. The large cases depend on a GPU machine (D25).
+- **Result (2026-10-18, laptop CPU):**
+
+  | Check | Ours | Reference | Difference | Run time |
+  |---|---|---|---|---|
+  | SP2, d/l_ex = 1 (50×10×1) | H_c/Ms = 0.05704, remanence (1.0000, 0.0000) | 0.05707 exact; OOMMF 1.1 also gives 0.05704 | −0.05% | 2 min for both SP2 sizes |
+  | SP2, d/l_ex = 10 (100×20×2) | H_c/Ms = 0.05446, remanence (0.9989, 0.0000) | OOMMF 1.1: 0.05454, (0.9989, 0.0000) | −0.15% | (included above) |
+  | Pure 40 nm cube (30³ cells) | switching field 5.275 T | 5.29 T | −0.3% | 8.2 min (72 fields, 46,299 minimizer iterations) |
+  | 25 nm core–shell cube (1 nm cells) | H_c = 2.721 T | Fig. 8a: 2.76 T | −0.04 T | 3.0 min (87 fields) |
+
+  The cube results come from 72 and 87 refined fields instead of the 1,300–6,500 a fixed fine step would need.
+- **Mutation check:** each bug was planted alone, and each was caught by the fast tests.
+  - Regions painted with x and z swapped: caught by the region painting test.
+  - Refinement triggered by sign changes only, not jumps: caught by Stoner–Wohlfarth at 60°, where H_c and the switch differ.
+  - Halving without restoring the state from before the step: caught by both Stoner–Wohlfarth cases.
+  - Remanence taken from the last row: caught by both.
+- **Still to run on a GPU:** SP2 at d/l_ex = 20 and 30, the 50 nm cube, the full SP2 curve and the 100 nm cube.
