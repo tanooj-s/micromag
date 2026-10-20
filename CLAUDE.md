@@ -3,7 +3,8 @@
 This is a from-scratch finite-difference micromagnetic solver, modelled on the micromagnetic part of MagTense (github.com/cmt-dtu-energy/MagTense). It is first a teaching exercise in architecture for scientific software, and second a physics code.
 
 - **Physics spec:** Fischbacher et al. 2018, J. Phys. D 51 193002, https://doi.org/10.1088/1361-6463/aab7d1 (open access). A local copy, kept out of git, is at `refs/Fischbacher_2018_J._Phys._D__Appl._Phys._51_193002.pdf`.
-- **Roadmap, status and decision log:** `NOTES.md`. Read it at the start of each session.
+- **Roadmap, status and open work:** `NOTES.md`. Read it at the start of each session.
+- **Decision log:** `DECISIONS.md` (D1…, in order; find one with `grep -n "### D32" DECISIONS.md`). **Published comparisons:** `BENCHMARKS.md`.
 
 ## Working with the user
 - This is a teaching project, and the user is the learner, so explain the *why* in plain language.
@@ -17,11 +18,11 @@ This is a from-scratch finite-difference micromagnetic solver, modelled on the m
 Iterations 1–4 followed these steps, and the user expects them each time:
 1. Read the iteration's row in the NOTES.md roadmap. Explain the physics in plain terms.
 2. Settle the design in rounds of numbered questions, each with a recommended answer (the `grilling` skill). Look up facts yourself, e.g. benchmark data from the µMAG site. End with a one-paragraph summary, and wait for the user to confirm it.
-3. Write decision-log entries and the reworded roadmap check to NOTES.md, and commit the design on its own.
+3. Write decision-log entries to DECISIONS.md and the reworded roadmap check to NOTES.md, and commit the design on its own.
 4. Write the tests, then run them against stub implementations. Every test must go **red** for a real reason. A test that passes on an all-zero or do-nothing stub needs a guard (e.g. `assert norm(expected) > 0`).
 5. Implement until green.
 6. Run a **mutation check**: plant 3–4 realistic bugs one at a time, record which tests catch each, and restore the source. Keep backups in the scratchpad. Do not rebuild while another `uv run` is still using the extension.
-7. Record measured numbers in NOTES.md: **Result** lines under the decision, and published comparisons in **Reference benchmarks**. Mark the roadmap row ✅.
+7. Record measured numbers: **Result** lines under the decision in DECISIONS.md, and published comparisons in BENCHMARKS.md. Mark the roadmap row ✅ in NOTES.md.
 8. Show the test output, give the walkthrough, and ask before committing the code. After the commit, push to `origin main`.
 
 ## Stack
@@ -56,6 +57,6 @@ The build uses uv with scikit-build-core and nanobind. `uv run` rebuilds the C++
 ## Hard rules
 - An iteration is done only when its physics check, listed in NOTES.md, passes, and you have shown the test output.
 - The CPU implementation is the oracle. Every GPU kernel is tested against it.
-- When you make a non-obvious decision, add an entry to the decision log in NOTES.md (context / decision / alternatives / consequence) in the same change.
+- When you make a non-obvious decision, add an entry to the decision log in DECISIONS.md (context / decision / alternatives / consequence) in the same change.
 - Do not add an abstraction until there is a second implementation that needs it.
 - Every non-trivial numerical routine needs a test against an analytic result or an independent oracle.
