@@ -1,0 +1,20 @@
+# The fast CPU test suite on every push and pull request (D39). The CUDA tests skip themselves on these
+# CPU-only builds; GPU runs are manual (docs/gpu.md).
+name: tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync              # builds the C++ extension; Python comes from .python-version
+      - run: uv run pytest -q

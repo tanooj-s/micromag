@@ -6,6 +6,8 @@ build-backend = "scikit_build_core.build"
 name = "micromag"
 version = "0.0.1"
 requires-python = ">=3.11"  # tomllib (D27)
+license = "GPL-3.0-or-later"  # D39
+license-files = ["LICENSE"]
 dependencies = ["numpy", "h5py"]
 
 [project.scripts]
@@ -16,6 +18,7 @@ dev = [
     "mpmath>=1.4.1",
     "pytest",
 ]
+docs = ["matplotlib"]  # docs/make_figures.py only: `uv run --group docs python docs/make_figures.py` (D39)
 
 [tool.pytest.ini_options]
 markers = ["slow: long physics runs (e.g. µMAG SP4); run with `pytest -m slow`"]

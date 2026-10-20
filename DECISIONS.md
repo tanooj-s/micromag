@@ -614,3 +614,20 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
   - CLAUDE.md names the right file for each kind of entry.
 - **Alternatives:** one file per decision (37 files): loses the chronological read, and every new or corrected entry touches more files. A `docs/` folder: one more level for three files.
 - **Consequence:** the session-start read is about 100 lines. Decisions are found with `grep -n "### D32" DECISIONS.md`.
+
+### D39: Documentation, license and CI (2026-10-20)
+- **Context:** the repo is public on GitHub but had no README, no license and no CI. Its how-to knowledge lived only in the decision log. The user asked for developer-appropriate docs with a README modelled on astral-sh/uv.
+- **Decision:**
+  - **README.md** in uv's order: badges, a hero figure, highlights, installation, quick start, links to the docs, features, validation, contributing, FAQ, acknowledgements, license.
+  - **docs/**: Markdown pages that GitHub renders. `cards.md` (every card key), `results.md` (the folder), `verification.md` (the suite and validation table), `architecture.md` (the flow, principles, file map, Python API), `gpu.md` (CUDA builds, Colab, Slurm, the Docker check). They are written from the code, and CLAUDE.md requires them to change with it.
+  - **Hero figure:** `docs/make_figures.py` runs `examples/grains.toml` and draws a mid-plane microstructure slice (grains shaded by easy-axis tilt, the boundary phase gray) beside the demagnetization curve and its H_c, in light and dark versions for a `<picture>` element. The colours come from the dataviz reference palette on GitHub's surfaces. matplotlib is in a separate `docs` dependency group, so tests and CI don't install it.
+  - **License: GPL-3.0-or-later** (user's choice, after weighing it against MIT, BSD-3-Clause and MIT/Apache-2.0). It is copyleft, as MagTense and mumax3 are. All dependencies (nanobind, pocketfft, numpy, h5py) are BSD and compatible with it. Declared in `pyproject.toml` with PEP 639 `license` / `license-files`.
+  - **CI:** `.github/workflows/tests.yml` runs the fast suite (`uv sync`, `uv run pytest -q`) on ubuntu-latest and macos-latest for every push and pull request. The GPU tests stay manual (Colab).
+- **Alternatives:**
+  - A MkDocs site on GitHub Pages, as uv has: a build and deploy to maintain before there are outside users.
+  - One long README: mixes the pitch with the reference.
+  - A validation table as the hero: no dependency, but less immediate; the table is in the README body instead.
+  - No CI: the badge would be decoration.
+  - Per-file GPL headers: suggested by the GPL, not required; the LICENSE file and the package metadata suffice.
+- **Consequence:** docs can drift from the code, so the CLAUDE.md rule ties them together. The hero PNGs have to be regenerated when the grains example or its result changes. GPL-3.0 means derived distributions must stay open.
+

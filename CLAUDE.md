@@ -22,7 +22,7 @@ Iterations 1–4 followed these steps, and the user expects them each time:
 4. Write the tests, then run them against stub implementations. Every test must go **red** for a real reason. A test that passes on an all-zero or do-nothing stub needs a guard (e.g. `assert norm(expected) > 0`).
 5. Implement until green.
 6. Run a **mutation check**: plant 3–4 realistic bugs one at a time, record which tests catch each, and restore the source. Keep backups in the scratchpad. Do not rebuild while another `uv run` is still using the extension.
-7. Record measured numbers: **Result** lines under the decision in DECISIONS.md, and published comparisons in BENCHMARKS.md. Mark the roadmap row ✅ in NOTES.md.
+7. Record measured numbers: **Result** lines under the decision in DECISIONS.md, and published comparisons in BENCHMARKS.md. Mark the roadmap row ✓ in NOTES.md.
 8. Show the test output, give the walkthrough, and ask before committing the code. After the commit, push to `origin main`.
 
 ## Stack
@@ -32,7 +32,7 @@ Iterations 1–4 followed these steps, and the user expects them each time:
 
 ## Commands
 The build uses uv with scikit-build-core and nanobind. `uv run` rebuilds the C++ automatically when `src/`, `CMakeLists.txt` or `pyproject.toml` change.
-- **Test (laptop, CPU):** `uv run pytest`. The benchmark runs (µMAG SP3 and SP4, about 30 s in total) are marked `slow` and excluded by default. Run them with `uv run pytest -m slow -s`, which prints the comparison numbers. On this Mac, `/usr/local/bin/cmake` is an x86_64 binary, so export `ARCHFLAGS="-arch arm64"`, or the extension builds for the wrong architecture.
+- **Test (laptop, CPU):** `uv run pytest`. The benchmark runs (µMAG SP2–SP4, the cubes, the Stoner–Wohlfarth ensemble; about 15 min on the laptop CPU) are marked `slow` and excluded by default. Run them with `uv run pytest -m slow -s`, which prints the comparison numbers. On this Mac, `/usr/local/bin/cmake` is an x86_64 binary, so export `ARCHFLAGS="-arch arm64"`, or the extension builds for the wrong architecture.
 - **Cluster storage:** the home directory quota is small, so the uv cache and Python installs go on scratch. These lines are in `~/.bashrc` on the cluster:
   ```
   export UV_CACHE_DIR=/gpfs/u/scratch/TMGN/TMGNtjsh/.cache/uv
@@ -46,6 +46,7 @@ The build uses uv with scikit-build-core and nanobind. `uv run` rebuilds the C++
   uv sync
   ```
 - **Test (cluster, GPU):** `sbatch hpc/test.sbatch`. The log goes to `micromag-test-<jobid>.out`.
+- **README figure:** `uv run --group docs python docs/make_figures.py` (about a minute) regenerates `docs/img/hero-{light,dark}.png`.
 
 ## Conventions
 - SI units throughout: A/m, J/m³, J/m, T.
@@ -53,6 +54,7 @@ The build uses uv with scikit-build-core and nanobind. `uv run` rebuilds the C++
 - Name the paper equation a function implements in a comment, e.g. `// eq. 21`.
 - Material parameters (Ms, A, K, k̂) are stored per cell, not as global scalars.
 - Solver state lives in objects that are passed in. No module-level or global state.
+- No colour emoji anywhere in the repo (user, 2026-10-20). Use plain monochrome Unicode instead, e.g. ✓ (U+2713) for check marks.
 
 ## Hard rules
 - An iteration is done only when its physics check, listed in NOTES.md, passes, and you have shown the test output.
@@ -60,3 +62,4 @@ The build uses uv with scikit-build-core and nanobind. `uv run` rebuilds the C++
 - When you make a non-obvious decision, add an entry to the decision log in DECISIONS.md (context / decision / alternatives / consequence) in the same change.
 - Do not add an abstraction until there is a second implementation that needs it.
 - Every non-trivial numerical routine needs a test against an analytic result or an independent oracle.
+- When a card key, an output file or a command changes, update the matching `docs/` page (and the README if it shows it) in the same change.
