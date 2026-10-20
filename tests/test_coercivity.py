@@ -16,7 +16,7 @@ def card_text(n, cell, material, direction, start, end, step, refine_to, regions
 n = {list(n)}
 cell = {[float(c) for c in cell]}
 
-[material]
+[material.main]
 {material}
 {regions}
 [initial]
@@ -97,9 +97,14 @@ def test_core_shell_cube_matches_fig8a(tmp_path, device, edge, ref):
     if device == "cpu" and edge > 25:
         pytest.skip("CUDA-only size (D32)")
     core = f"""
-[[region]]
-box = [[3e-9, 3e-9, 3e-9], [{(edge - 3) * 1e-9!r}, {(edge - 3) * 1e-9!r}, {(edge - 3) * 1e-9!r}]]
+[material.core]
 {CORE}
+
+[[region]]
+id = 1
+material = "core"
+shape = "cuboid"
+corners = [[3e-9, 3e-9, 3e-9], [{(edge - 3) * 1e-9!r}, {(edge - 3) * 1e-9!r}, {(edge - 3) * 1e-9!r}]]
 """
     text = card_text((edge,) * 3, [1e-9] * 3, SHELL, tilted(), 0.0, -4.0, 0.05, 1e-3, regions=core)
     s = run_card(tmp_path, text, device)

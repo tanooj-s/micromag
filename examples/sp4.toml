@@ -6,7 +6,7 @@
 n    = [128, 32, 1]                    # cells along x, y, z
 cell = [3.90625e-9, 3.90625e-9, 3e-9]  # m
 
-[material]
+[material.permalloy]
 Ms = 8e5        # A/m
 A  = 1.3e-11    # J/m
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <stdexcept>
 
 constexpr double pi = 3.141592653589793;
@@ -20,6 +21,10 @@ struct Grid {
 };
 
 // Each writes H (A/m) into H, overwriting it. Cells with Ms == 0 are vacuum and get H = 0.
-void exchange_field(const Grid& g, const double* m, const double* Ms, const double* A, double* H);
+// region (uint8 per cell) and pair (256 × 256, row-major) scale the face coupling between unlike regions (D35);
+// both null gives the plain D11 kernel.
+constexpr size_t n_regions = 256;
+void exchange_field(const Grid& g, const double* m, const double* Ms, const double* A, double* H,
+                    const uint8_t* region = nullptr, const double* pair = nullptr);
 void anisotropy_field(const Grid& g, const double* m, const double* Ms, const double* K, const double* k, double* H);
 void zeeman_field(const Grid& g, const double* Ms, const double H_ext[3], double* H);

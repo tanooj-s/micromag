@@ -11,8 +11,14 @@ namespace {
 // The CPU oracle: the iteration 1–4 loops, unchanged.
 class CpuBackend : public Backend {
 public:
-    CpuBackend(const Grid& g, const double* Ms, const double* A, const double* K, const double* k)
-        : g_(g), Ms_(Ms, Ms + g.n()), A_(A, A + g.n()), K_(K, K + g.n()), k_(k, k + 3 * g.n()), demag_(g) {}
+    CpuBackend(const Grid& g, const double* Ms, const double* A, const double* K, const double* k, const uint8_t* region,
+               const double* pair)
+        : g_(g), Ms_(Ms, Ms + g.n()), A_(A, A + g.n()), K_(K, K + g.n()), k_(k, k + 3 * g.n()), demag_(g) {
+        if (region) {
+            region_.assign(region, region + g.n());
+            pair_.assign(pair, pair + n_regions * n_regions);
+        }
+    }
 
     double* alloc(size_t len) override { return new double[len]; }
     void release(double* p) override { delete[] p; }
@@ -22,7 +28,9 @@ public:
 
     void field(Term t, const double* m, const std::array<double, 3>& H_ext, double* H) override {
         switch (t) {
-            case Term::exchange: return exchange_field(g_, m, Ms_.data(), A_.data(), H);
+            case Term::exchange:
+                return exchange_field(g_, m, Ms_.data(), A_.data(), H, region_.empty() ? nullptr : region_.data(),
+                                      region_.empty() ? nullptr : pair_.data());
             case Term::anisotropy: return anisotropy_field(g_, m, Ms_.data(), K_.data(), k_.data(), H);
             case Term::zeeman: return zeeman_field(g_, Ms_.data(), H_ext.data(), H);
             case Term::demag: return demag_.field(m, Ms_.data(), H);
@@ -103,14 +111,16 @@ public:
 
 private:
     Grid g_;
-    std::vector<double> Ms_, A_, K_, k_;
+    std::vector<double> Ms_, A_, K_, k_, pair_;
+    std::vector<uint8_t> region_;  // empty: no pair table (D35)
     Demag demag_;
 };
 
-std::unique_ptr<Backend> make_backend(Device d, const Grid& g, const double* Ms, const double* A, const double* K, const double* k) {
-    if (d == Device::cpu) return make_cpu_backend(g, Ms, A, K, k);
+std::unique_ptr<Backend> make_backend(Device d, const Grid& g, const double* Ms, const double* A, const double* K, const double* k,
+                                      const uint8_t* region, const double* pair) {
+    if (d == Device::cpu) return make_cpu_backend(g, Ms, A, K, k, region, pair);
 #ifdef MICROMAG_CUDA
-    return make_cuda_backend(g, Ms, A, K, k);
+    return make_cuda_backend(g, Ms, A, K, k, region, pair);
 #else
     throw std::runtime_error("micromag was built without CUDA (set MICROMAG_CUDA=ON)");
 #endif
@@ -118,15 +128,23 @@ std::unique_ptr<Backend> make_backend(Device d, const Grid& g, const double* Ms,
 
 }  // namespace
 
-std::unique_ptr<Backend> make_cpu_backend(const Grid& g, const double* Ms, const double* A, const double* K, const double* k) {
-    return std::make_unique<CpuBackend>(g, Ms, A, K, k);
+std::unique_ptr<Backend> make_cpu_backend(const Grid& g, const double* Ms, const double* A, const double* K, const double* k,
+                                          const uint8_t* region, const double* pair) {
+    return std::make_unique<CpuBackend>(g, Ms, A, K, k, region, pair);
 }
 
 Problem::Problem(const Grid& g, const double* Ms, const double* A, const double* K, const double* k, std::array<double, 3> H_ext,
-                 Device device)
-    : H_ext(H_ext), g_(g), Ms_(Ms, Ms + g.n()), b_(make_backend(device, g, Ms, A, K, k)), tmp_(*b_, 3 * g.n()) {}
+                 Device device, const uint8_t* region, const double* pair, bool demag)
+    : H_ext(H_ext), g_(g), demag_(demag), Ms_(Ms, Ms + g.n()), b_(make_backend(device, g, Ms, A, K, k, region, pair)),
+      tmp_(*b_, 3 * g.n()) {
+    if (!region != !pair) throw std::invalid_argument("give both the region map and the pair table, or neither (D35)");
+}
 
-void Problem::field(Term t, const double* m, double* H) { b_->field(t, m, H_ext, H); }
+// D36: with demag off, its field is zero (lincomb with no terms writes h · 0).
+void Problem::field(Term t, const double* m, double* H) {
+    if (t == Term::demag && !demag_) return b_->lincomb(H, nullptr, 0, nullptr, nullptr, 0);
+    b_->field(t, m, H_ext, H);
+}
 
 // Each term overwrites (D10), so the rest are added through one scratch buffer.
 void Problem::effective_field(const double* m, double* H) {
@@ -134,6 +152,7 @@ void Problem::effective_field(const double* m, double* H) {
     const double one = 1;
     const double* tmp = tmp_.data();
     for (Term t : {Term::anisotropy, Term::zeeman, Term::demag}) {
+        if (t == Term::demag && !demag_) continue;
         b_->field(t, m, H_ext, tmp_.data());
         b_->lincomb(H, H, 1, &one, &tmp, 1);
     }
@@ -145,6 +164,10 @@ std::array<double, 4> Problem::energies(const double* m) {
     const double c[4] = {0.5, 0.5, 1.0, 0.5};
     std::array<double, 4> out;
     for (int i = 0; i < 4; ++i) {
+        if (terms[i] == Term::demag && !demag_) {
+            out[i] = 0;
+            continue;
+        }
         b_->field(terms[i], m, H_ext, tmp_.data());
         out[i] = -c[i] * mu0 * dV * b_->ms_dot(m, tmp_.data());
     }

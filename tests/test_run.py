@@ -12,7 +12,8 @@ import pytest
 import micromag as mm
 from micromag.card import CardError
 from micromag.card import load
-from micromag.run import git_state, main, materials, run
+from micromag.regions import paint
+from micromag.run import git_state, main, run
 from test_llg import SP4_REF, first_zero_crossing
 
 HEAD = """
@@ -20,7 +21,7 @@ HEAD = """
 n = [4, 3, 2]
 cell = [2e-9, 2e-9, 2e-9]
 
-[material]
+[material.permalloy]
 Ms = 8e5
 A = 1.3e-11
 K = 5e5
@@ -235,33 +236,37 @@ def test_sp4_card_matches_oommf(tmp_path):
     assert rms <= 0.05
 
 
-def test_regions_paint_cell_centres_in_order(tmp_path):
-    # D30: a cell takes a box's values if its centre is inside (lower bound included); later boxes win.
+def test_region_map_is_saved_and_volumes_reported(tmp_path, capsys):
+    # D33: the map goes to trajectory.h5 with its id -> material names; provenance has each region's volumes.
     path = tmp_path / "card.toml"
-    path.write_text(HEAD.replace("K = 5e5", "K = 0") + """
+    path.write_text(HEAD + """
+[material.hard]
+Ms = 1.2e6
+A = 8e-12
+K = 4e6
+
+[[region]]
+id = 7
+material = "hard"
+shape = "cuboid"
+corners = [[2e-9, 0, 0], [12e-9, 6e-9, 4e-9]]   # sticks out of the 8 nm grid: half of it is clipped
+
 [initial]
 m = [0, 0, 1]
-
-[[region]]
-box = [[2e-9, 0, 0], [8e-9, 6e-9, 4e-9]]
-K = 1e5
-axis = [1, 0, 0]
-
-[[region]]
-box = [[0, 0, 2e-9], [4e-9, 6e-9, 4e-9]]
-Ms = 0
 
 [[stage]]
 type = "minimize"
 """)
-    Ms, A, K, axis = materials(load(path))
-    x_in = np.array([False, True, True, True])            # cell centres at 1, 3, 5, 7 nm; box from 2 nm
-    assert np.array_equal(K, np.where(x_in, 1e5, 0.0) * np.ones((2, 3, 1)))
-    assert np.array_equal(axis[0], np.where(x_in, 1.0, 0.0) * np.ones((2, 3, 1)))
-    assert np.array_equal(axis[2], np.where(x_in, 0.0, 1.0) * np.ones((2, 3, 1)))
-    vacuum = np.zeros((2, 3, 4), bool)
-    vacuum[1, :, :2] = True                                # z centre 3 nm, x centres 1 and 3 nm
-    assert np.array_equal(Ms, np.where(vacuum, 0.0, MS)) and np.all(A == 1.3e-11)
+    run(path, tmp_path / "run")
+    with h5py.File(tmp_path / "run" / "trajectory.h5") as f:
+        regions = f["regions"][()]
+        names = json.loads(f["regions"].attrs["materials"])
+    assert regions.dtype == np.uint8 and np.array_equal(regions, paint(load(path)).regions)
+    assert set(np.unique(regions)) == {0, 7} and names == {"0": "permalloy", "7": "hard"}
+    prov = json.loads((tmp_path / "run" / "provenance.json").read_text())
+    (r,) = prov["regions"]
+    assert r["id"] == 7 and r["volume_m3"] == pytest.approx(240e-27) and r["cells_m3"] == pytest.approx(144e-27)
+    assert "region 1" in capsys.readouterr().err  # a 40% mismatch is warned (D33)
 
 
 @pytest.mark.parametrize("psi, hc, hsw", [(30, 0.5240, 0.5240), (60, 0.4330, 0.5240)])
@@ -276,7 +281,7 @@ def test_refined_hysteresis_reports_coercive_and_switching_fields(tmp_path, caps
 n = [1, 1, 1]
 cell = [2e-9, 2e-9, 2e-9]
 
-[material]
+[material.permalloy]
 Ms = 8e5
 A = 1e-11
 K = 5e5

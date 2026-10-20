@@ -1,0 +1,43 @@
+# A small Nd2Fe14B polycrystal (D33–D35): 8 Voronoi grains with easy axes within 15° of z, coated by the Fig. 8
+# Nd40Fe60 boundary phase, in a 40 nm cube. CPU-sized (20³ cells, about a minute); for a real study, refine the
+# cells and raise count (up to 255 grains), and run it on a GPU.
+# The boundary is 4 nm between grains (2 nm per grain, the minimum of 2 cells); thinner boundaries are modelled
+# with a [[coupling]] scale instead, as in the commented example below.
+
+[grid]
+n    = [20, 20, 20]
+cell = [2e-9, 2e-9, 2e-9]
+
+[material.grain]            # Fig. 8 core: listed first, so it is region 0 (unused here: the grains fill the grid)
+Ms   = 1281197.2918897576   # A/m (µ0 Ms = 1.61 T)
+A    = 8e-12                # J/m
+K    = 4.9e6                # J/m³
+axis = [0, 0, 1]
+
+[material.boundary]         # Fig. 8 shell, Nd40Fe60
+Ms = 379584.53927417035     # A/m (µ0 Ms = 0.477 T)
+A  = 6.12e-12
+K  = 0.0
+
+[grains]
+count    = 8
+first_id = 1
+material = "grain"
+seed     = 1
+axes     = { mean = [0, 0, 1], cone_deg = 15 }
+boundary = { thickness = 4e-9, material = "boundary", id = 100 }
+
+# [[coupling]]              # weaken the grain ↔ boundary exchange to a tenth (D35)
+# regions = ["grains", 100]
+# scale   = 0.1
+
+[initial]
+m = [0.01745240643728351, 0.0, 0.9998476951563913]
+
+[[stage]]
+type = "hysteresis"
+direction  = [0.01745240643728351, 0.0, 0.9998476951563913]   # 1° off z
+mu0_H_from = 0.0
+mu0_H_to   = -6.0
+mu0_H_step = 0.1
+refine_to  = 1e-3

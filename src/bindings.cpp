@@ -1,10 +1,12 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/array.h>
+#include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 
 #include <array>
 #include <limits>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -20,6 +22,8 @@ using namespace nb::literals;
 using Vec = nb::ndarray<double, nb::ndim<1>, nb::c_contig, nb::device::cpu>;
 using In = nb::ndarray<const double, nb::c_contig, nb::device::cpu>;
 using Out = nb::ndarray<double, nb::c_contig, nb::device::cpu>;
+using Labels = std::optional<nb::ndarray<const uint8_t, nb::c_contig, nb::device::cpu>>;
+using Table = std::optional<nb::ndarray<const double, nb::ndim<2>, nb::c_contig, nb::device::cpu>>;
 
 #ifdef MICROMAG_CUDA
 void scale_cuda(double* x, size_t n, double a);  // scale.cu
@@ -49,6 +53,17 @@ static void check_shape(const T& a, const Grid& g, bool vector, const char* name
     bool ok = a.ndim() == nd;
     for (size_t i = 0; ok && i < nd; ++i) ok = a.shape(i) == w[i];
     if (!ok) throw std::invalid_argument(std::string(name) + " must have shape " + (vector ? "(3, nz, ny, nx)" : "(nz, ny, nx)"));
+}
+
+// D35: the region map and pair table come together; returns their pointers, or nulls.
+static std::pair<const uint8_t*, const double*> check_regions(const Labels& regions, const Table& coupling, const Grid& g) {
+    if (regions.has_value() != coupling.has_value())
+        throw std::invalid_argument("give both regions and coupling, or neither (D35)");
+    if (!regions) return {nullptr, nullptr};
+    check_shape(*regions, g, false, "regions");
+    if (coupling->shape(0) != n_regions || coupling->shape(1) != n_regions)
+        throw std::invalid_argument("coupling must have shape (256, 256)");
+    return {regions->data(), coupling->data()};
 }
 
 static Device parse_device(const std::string& name) {
@@ -90,10 +105,13 @@ NB_MODULE(_core, m) {
         .def_ro("dx", &Grid::dx).def_ro("dy", &Grid::dy).def_ro("dz", &Grid::dz);
 
     // noconvert: a dtype or layout mismatch must raise, not silently copy (a copied `out` would lose the result).
-    m.def("exchange_field", [](const Grid& g, In mag, In Ms, In A, Out out) {
+    m.def("exchange_field", [](const Grid& g, In mag, In Ms, In A, Out out, Labels regions, Table coupling) {
         check_shape(mag, g, true, "m"); check_shape(Ms, g, false, "Ms"); check_shape(A, g, false, "A"); check_shape(out, g, true, "out");
-        exchange_field(g, mag.data(), Ms.data(), A.data(), out.data());
-    }, "grid"_a, "m"_a.noconvert(), "Ms"_a.noconvert(), "A"_a.noconvert(), "out"_a.noconvert(), "Exchange field (eq. 8), A/m.");
+        const auto [r, c] = check_regions(regions, coupling, g);
+        exchange_field(g, mag.data(), Ms.data(), A.data(), out.data(), r, c);
+    }, "grid"_a, "m"_a.noconvert(), "Ms"_a.noconvert(), "A"_a.noconvert(), "out"_a.noconvert(),
+       "regions"_a.noconvert() = nb::none(), "coupling"_a.noconvert() = nb::none(),
+       "Exchange field (eq. 8), A/m. regions (uint8) and coupling (256 x 256) scale it between unlike regions (D35).");
 
     m.def("anisotropy_field", [](const Grid& g, In mag, In Ms, In K, In k, Out out) {
         check_shape(mag, g, true, "m"); check_shape(Ms, g, false, "Ms"); check_shape(K, g, false, "K"); check_shape(k, g, true, "k"); check_shape(out, g, true, "out");
@@ -120,11 +138,14 @@ NB_MODULE(_core, m) {
         }, "m"_a.noconvert(), "Ms"_a.noconvert(), "out"_a.noconvert(), "Demagnetizing field (eq. 21), A/m.");
 
     nb::class_<Problem>(m, "Problem")
-        .def("__init__", [](Problem* p, const Grid& g, In Ms, In A, In K, In k, std::array<double, 3> H_ext, const std::string& device) {
+        .def("__init__", [](Problem* p, const Grid& g, In Ms, In A, In K, In k, std::array<double, 3> H_ext, const std::string& device,
+                            Labels regions, Table coupling, bool demag) {
             check_shape(Ms, g, false, "Ms"); check_shape(A, g, false, "A"); check_shape(K, g, false, "K"); check_shape(k, g, true, "k");
-            new (p) Problem(g, Ms.data(), A.data(), K.data(), k.data(), H_ext, parse_device(device));  // copies the materials (D19)
+            const auto [r, c] = check_regions(regions, coupling, g);
+            new (p) Problem(g, Ms.data(), A.data(), K.data(), k.data(), H_ext, parse_device(device), r, c, demag);  // copies all (D19)
         }, "grid"_a, "Ms"_a.noconvert(), "A"_a.noconvert(), "K"_a.noconvert(), "k"_a.noconvert(), "H_ext"_a, "device"_a = "cpu",
-           "device: \"cpu\" or \"cuda\". LLG and Minimizer run on their Problem's device (D24).")
+           "regions"_a.noconvert() = nb::none(), "coupling"_a.noconvert() = nb::none(), "demag"_a = true,
+           "device: \"cpu\" or \"cuda\". LLG and Minimizer run on their Problem's device (D24). regions/coupling: D35; demag: D36.")
         .def_rw("H_ext", &Problem::H_ext, "External field (A/m).")
         .def("field", [](Problem& p, const std::string& term, In mag, Out out) {
             const Term t = parse_term(term);

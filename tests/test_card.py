@@ -10,7 +10,7 @@ GRID = """
 n = [4, 3, 2]
 cell = [2e-9, 2e-9, 2e-9]
 
-[material]
+[material.permalloy]
 Ms = 8e5
 A = 1.3e-11
 
@@ -43,8 +43,11 @@ def test_minimal_card_gets_its_defaults(tmp_path):
     c = card(tmp_path, LLG)
     assert c.device == "cpu"
     assert c.n == (4, 3, 2) and c.cell == (2e-9, 2e-9, 2e-9)
-    assert c.Ms == 8e5 and isinstance(c.Ms, float)  # `8e5` is a number in TOML, unlike in PyYAML (D27)
-    assert c.K == 0.0 and np.array_equal(c.axis, [0, 0, 1])
+    (mat,) = c.materials.values()
+    assert list(c.materials) == ["permalloy"] and c.demag is True
+    assert mat.Ms == 8e5 and isinstance(mat.Ms, float)  # `8e5` is a number in TOML, unlike in PyYAML (D27)
+    assert mat.K == 0.0 and np.array_equal(mat.axis, [0, 0, 1])
+    assert c.regions == [] and c.grains is None and c.couplings == []
     assert np.allclose(c.m0, np.ones(3) / math.sqrt(3))  # normalised on load
     (s,) = c.stages
     assert s.type == "llg-dynamics" and s.alpha == 0.5 and s.duration == 1e-11
@@ -122,39 +125,85 @@ mu0_H_step = 0.1
     assert "mu0_H_step" in errors(tmp_path, ramp.replace("mu0_H_step = 0.1", "mu0_H_step = 0.3"))  # 0.5 / 0.3 is not whole
 
 
-REGIONS = GRID + """
-[[region]]
-box = [[2e-9, 0, 0], [8e-9, 6e-9, 4e-9]]
-K = 1e5
+HARD = """
+[material.hard]
+Ms = 1.2e6
+A = 8e-12
+K = 4e6
 axis = [1, 0, 0]
-
+"""
+BALL = """
 [[region]]
-box = [[0, 0, 2e-9], [4e-9, 6e-9, 4e-9]]
-Ms = 0
+id = 1
+material = "hard"
+shape = "ellipsoid"
+center = [4e-9, 3e-9, 2e-9]
+semi_axes = [3e-9, 2e-9, 1e-9]
 """
 
 
-def test_regions_parse_in_order(tmp_path):
-    c = card(tmp_path, LLG, REGIONS)
+def test_regions_grains_and_couplings_parse(tmp_path):
+    c = card(tmp_path, LLG, GRID + HARD + BALL + """
+[[region]]
+id = 2
+material = "vacuum"
+shape = "cuboid"
+corners = [[0, 0, 0], [2e-9, 2e-9, 2e-9]]
+inverse = true
+axis = [0, 1, 1]
+
+[grains]
+count = 4
+first_id = 10
+material = "hard"
+seed = 5
+within = 1
+axes = { mean = [0, 0, 2], cone_deg = 15 }
+boundary = { thickness = 4e-9, material = "permalloy", id = 3 }
+
+[[coupling]]
+regions = ["grains", 3]
+A = 1e-12
+""")
+    assert list(c.materials) == ["permalloy", "hard"]  # card order: the first is the background (D33)
     r1, r2 = c.regions
-    assert np.allclose(r1.box, [[2e-9, 0, 0], [8e-9, 6e-9, 4e-9]], rtol=0, atol=0)
-    assert set(r1.values) == {"K", "axis"} and r1.values["K"] == 1e5 and np.array_equal(r1.values["axis"], [1, 0, 0])
-    assert r2.values == {"Ms": 0.0}  # Ms = 0 is vacuum, allowed in a region (D30)
-    assert card(tmp_path, LLG).regions == []
+    assert (r1.id, r1.material, r1.shape, r1.inverse, r1.axis) == (1, "hard", "ellipsoid", False, None)
+    assert np.array_equal(r1.params["semi_axes"], [3e-9, 2e-9, 1e-9])
+    assert r2.inverse and np.allclose(r2.axis, [0, 1 / np.sqrt(2), 1 / np.sqrt(2)])
+    g = c.grains
+    assert (g.count, g.first_id, g.material, g.seed, g.within) == (4, 10, "hard", 5, 1)
+    assert np.array_equal(g.axes["mean"], [0, 0, 1]) and g.axes["cone_deg"] == 15
+    assert (g.boundary.thickness, g.boundary.material, g.boundary.id) == (4e-9, "permalloy", 3)
+    (cp,) = c.couplings
+    assert (cp.regions, cp.scale, cp.A) == (["grains", 3], None, 1e-12)
+    assert card(tmp_path, LLG, GRID.replace("cell", "demag = false\ncell")).demag is False
 
 
-@pytest.mark.parametrize("box, what", [
-    ("[[0, 0, 0], [1e-9, 1e-9]]", "box"),
-    ("[[2e-9, 0, 0], [1e-9, 1e-9, 1e-9]]", "box"),  # upper corner below lower corner
+@pytest.mark.parametrize("body, what", [
+    (BALL.replace('"hard"', '"hrad"'), "hrad"),                                  # unknown material, named
+    (BALL.replace("id = 1", "id = 0"), "id"),                                     # 0 is the background
+    (BALL.replace("id = 1", "id = 256"), "id"),
+    (BALL.replace('"ellipsoid"', '"sphere"'), "ellipsoid"),                       # names the valid shapes
+    (BALL.replace("semi_axes", "radius"), "semi_axes"),                           # a key of the wrong shape
+    (BALL + BALL.replace('"hard"', '"permalloy"'), "region 2"),                   # one id, two materials
+    (BALL.replace('"hard"', '"vacuum"') + "\n[material.vacuum]\nMs = 1.0\nA = 0.0\n", "vacuum"),  # reserved
+    ("\n[grains]\ncount = 250\nfirst_id = 10\nmaterial = \"hard\"\nseed = 1\n", "255"),
+    (BALL + "\n[grains]\ncount = 3\nfirst_id = 1\nmaterial = \"hard\"\nseed = 1\n", "first_id"),  # clashes with region 1
+    ("\n[grains]\ncount = 3\nfirst_id = 5\nmaterial = \"hard\"\nseed = 1\nwithin = 9\n", "within"),  # never painted
+    ("\n[grains]\ncount = 3\nfirst_id = 5\nmaterial = \"hard\"\nseed = 1\nboundary = { thickness = 3e-9, material = \"hard\", id = 2 }\n",
+     "coupling"),                                                                 # < 2 cells of 2 nm: use [[coupling]]
+    ("\n[[coupling]]\nregions = [0, 1]\n", "scale"),                            # neither scale nor A
+    (BALL + "\n[[coupling]]\nregions = [0, 1]\nscale = 1.0\nA = 1e-12\n", "scale"),  # both
+    (BALL + "\n[[coupling]]\nregions = [1, 1]\nscale = 0.5\n", "regions"),    # a pair is two different regions
+    (BALL + "\n[[coupling]]\nregions = [0, \"grains\"]\nscale = 0.5\n", "grains"),  # no [grains] table
 ])
-def test_region_box_is_checked(tmp_path, box, what):
-    assert what in errors(tmp_path, LLG, GRID + f"[[region]]\nbox = {box}\nK = 1.0\n")
+def test_region_errors_name_the_problem(tmp_path, body, what):
+    assert what in errors(tmp_path, LLG, GRID + HARD + body)
 
 
-def test_region_errors_name_the_problem(tmp_path):
-    assert "Kk" in errors(tmp_path, LLG, GRID + "[[region]]\nbox = [[0, 0, 0], [1e-9, 1e-9, 1e-9]]\nKk = 1.0\n")
-    assert "region 1" in errors(tmp_path, LLG, GRID + "[[region]]\nbox = [[0, 0, 0], [1e-9, 1e-9, 1e-9]]\n")  # sets nothing
-    assert "Ms" in errors(tmp_path, LLG, GRID + "[[region]]\nbox = [[0, 0, 0], [1e-9, 1e-9, 1e-9]]\nMs = -1.0\n")
+def test_flat_material_table_points_to_named_materials(tmp_path):
+    assert "[material.<name>]" in errors(tmp_path, LLG, GRID.replace("[material.permalloy]", "[material]"))
+    assert "demag" in errors(tmp_path, LLG, GRID.replace("cell", "demag = 1\ncell"))
 
 
 def test_refinement_keys(tmp_path):

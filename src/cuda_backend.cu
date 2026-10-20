@@ -51,15 +51,17 @@ __device__ size_t thread_index() { return blockIdx.x * size_t(blockDim.x) + thre
 
 __device__ double harmonic_mean(double a, double b) { return a + b > 0 ? 2 * a * b / (a + b) : 0.0; }
 
-// eq. 8, D11.
-__global__ void exchange_kernel(Grid g, const double* m, const double* Ms, const double* A, double* H) {
+// eq. 8, D11; region/pair as D35 (both null: no table).
+__global__ void exchange_kernel(Grid g, const double* m, const double* Ms, const double* A, const uint8_t* region, const double* pair,
+                                double* H) {
     const size_t sy = g.nx, sz = g.nx * g.ny, n = sz * g.nz, i = thread_index();
     if (i >= n) return;
     const size_t x = i % g.nx, y = i / g.nx % g.ny, z = i / sz;
     double h[3] = {0, 0, 0};
     auto add = [&](size_t j, double d) {
         if (Ms[j] == 0) return;
-        const double w = harmonic_mean(A[i], A[j]) / (d * d);
+        double w = harmonic_mean(A[i], A[j]) / (d * d);
+        if (region && region[i] != region[j]) w *= pair[region[i] * n_regions + region[j]];
         for (size_t c = 0; c < 3; ++c) h[c] += w * (m[c * n + j] - m[c * n + i]);
     };
     if (Ms[i] != 0) {
@@ -286,12 +288,19 @@ __global__ void bb_kernel(size_t N, const double* m, const double* m_prev, const
 
 class CudaBackend : public Backend {
 public:
-    CudaBackend(const Grid& g, const double* Ms, const double* A, const double* K, const double* k)
+    CudaBackend(const Grid& g, const double* Ms, const double* A, const double* K, const double* k, const uint8_t* region,
+                const double* pair)
         : g_(g), n_(g.n()), Ms_(n_), A_(n_), K_(n_), k_(3 * n_), w1_(3 * n_), w2_(3 * n_), w3_(3 * n_), out_(1), demag_(g) {
         to_device(Ms_.get(), Ms, n_);
         to_device(A_.get(), A, n_);
         to_device(K_.get(), K, n_);
         to_device(k_.get(), k, 3 * n_);
+        if (region) {
+            region_ = DevArray<uint8_t>(n_);
+            pair_ = DevArray<double>(n_regions * n_regions);
+            check(cudaMemcpy(region_.get(), region, n_, cudaMemcpyHostToDevice));
+            to_device(pair_.get(), pair, n_regions * n_regions);
+        }
     }
 
     double* alloc(size_t len) override {
@@ -312,7 +321,7 @@ public:
 
     void field(Term t, const double* m, const std::array<double, 3>& H_ext, double* H) override {
         switch (t) {
-            case Term::exchange: exchange_kernel<<<blocks(n_), block>>>(g_, m, Ms_.get(), A_.get(), H); break;
+            case Term::exchange: exchange_kernel<<<blocks(n_), block>>>(g_, m, Ms_.get(), A_.get(), region_.get(), pair_.get(), H); break;
             case Term::anisotropy: anisotropy_kernel<<<blocks(n_), block>>>(n_, m, Ms_.get(), K_.get(), k_.get(), H); break;
             case Term::zeeman: zeeman_kernel<<<blocks(n_), block>>>(n_, Ms_.get(), Vec3{{H_ext[0], H_ext[1], H_ext[2]}}, H); break;
             case Term::demag: return demag_.field(m, Ms_.get(), H);
@@ -394,12 +403,15 @@ private:
     size_t n_;
     DevArray<double> Ms_, A_, K_, k_, w1_, w2_, w3_, out_;  // w*: per-entry scratch for the reductions
     DevArray<char> temp_;
+    DevArray<uint8_t> region_;  // null without a pair table (D35)
+    DevArray<double> pair_;
     size_t temp_bytes_ = 0;
     CudaDemag demag_;
 };
 
 }  // namespace
 
-std::unique_ptr<Backend> make_cuda_backend(const Grid& g, const double* Ms, const double* A, const double* K, const double* k) {
-    return std::make_unique<CudaBackend>(g, Ms, A, K, k);
+std::unique_ptr<Backend> make_cuda_backend(const Grid& g, const double* Ms, const double* A, const double* K, const double* k,
+                                           const uint8_t* region, const double* pair) {
+    return std::make_unique<CudaBackend>(g, Ms, A, K, k, region, pair);
 }

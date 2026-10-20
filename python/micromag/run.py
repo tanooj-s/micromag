@@ -23,6 +23,7 @@ import numpy as np
 
 from . import LLG, Grid, Minimizer, Problem, mu0
 from .card import CardError, Hysteresis, LLGDynamics, Minimize, load
+from .regions import paint
 
 ENERGIES = ("exchange", "anisotropy", "zeeman", "demag")
 COLUMNS = {
@@ -122,32 +123,18 @@ class Microstate:
             ds[-1] = value
         self.f.flush()
 
+    def regions(self, painted):
+        """The region map (D33), with its id -> material names as JSON."""
+        d = self.f.create_dataset("regions", data=painted.regions, compression="gzip", shuffle=True)
+        d.attrs["materials"] = json.dumps({str(k): v for k, v in painted.names.items()})
+        d.attrs["layout"] = "regions[z, y, x], x fastest; uint8 ids"
+
     def single(self, name, m):
         self.f.create_group(name).create_dataset("m", data=m, compression="gzip", shuffle=True)
         self.f.flush()
 
     def close(self):
         self.f.close()
-
-
-def materials(card):
-    """Per-cell Ms, A, K (nz, ny, nx) and axis (3, nz, ny, nx): [material] everywhere, then each [[region]] box in
-    order over the cells whose centre lies inside it, lower bound included (D30)."""
-    nx, ny, nz = card.n
-    dx, dy, dz = card.cell
-    s = (nz, ny, nx)
-    values = {"Ms": np.full(s, card.Ms), "A": np.full(s, card.A), "K": np.full(s, card.K), "axis": np.empty((3, *s))}
-    values["axis"][:] = card.axis[:, None, None, None]
-    z, y, x = np.meshgrid((np.arange(nz) + 0.5) * dz, (np.arange(ny) + 0.5) * dy, (np.arange(nx) + 0.5) * dx, indexing="ij")
-    for r in card.regions:
-        (x0, y0, z0), (x1, y1, z1) = r.box
-        inside = (x0 <= x) & (x < x1) & (y0 <= y) & (y < y1) & (z0 <= z) & (z < z1)
-        for key, v in r.values.items():
-            if key == "axis":
-                values["axis"][:, inside] = v[:, None]
-            else:
-                values[key][inside] = v
-    return values["Ms"], values["A"], values["K"], values["axis"]
 
 
 def _schedule(end, rows_every, dump_every):
@@ -180,7 +167,9 @@ def run(card, out, device=None):
     device = device or card.device
 
     nx, ny, nz = card.n
-    prob = Problem(Grid(nx, ny, nz, *card.cell), *materials(card), (0, 0, 0), device=device)
+    p = paint(card)
+    prob = Problem(Grid(nx, ny, nz, *card.cell), p.Ms, p.A, p.K, p.axis, (0, 0, 0), device=device,
+                   regions=p.regions if p.coupling is not None else None, coupling=p.coupling, demag=card.demag)
     magnetic = prob.Ms > 0
 
     out.mkdir(parents=True, exist_ok=True)
@@ -197,8 +186,13 @@ def run(card, out, device=None):
         "versions": {"micromag": version("micromag"), "numpy": np.__version__, "h5py": h5py.__version__,
                      "python": platform.python_version()},
         "git": None if git is None else {"hash": git["hash"], "dirty": git["dirty"]},
-        "initial": initial, "stages": [],
+        "initial": initial, "regions": p.report, "stages": [],
     }
+    for r in p.report:  # staircasing or clipping (D33)
+        if r["volume_m3"] and abs(r["cells_m3"] / r["volume_m3"] - 1) > 0.05:
+            print(f"micromag: warning: region {r['region']} (id {r['id']}, {r['shape']}): painted volume {r['cells_m3']:.4g} m³ "
+                  f"differs from the shape's {r['volume_m3']:.4g} m³ by {100 * (r['cells_m3'] / r['volume_m3'] - 1):+.1f}%",
+                  file=sys.stderr)
 
     def save():
         (out / "provenance.json").write_text(json.dumps(prov, indent=2) + "\n")
@@ -210,6 +204,7 @@ def run(card, out, device=None):
 
     save()
     micro = Microstate(out / "trajectory.h5", card)
+    micro.regions(p)
     try:
         for k, stage in enumerate(card.stages, 1):
             start = time.perf_counter()

@@ -162,3 +162,108 @@ def test_cuda_device_needs_a_cuda_build():
     p = random_problem()
     with pytest.raises(RuntimeError, match="without CUDA"):
         mm.Problem(p["grid"], p["Ms"], p["A"], p["K"], p["k"], H_EXT, device="cuda")
+
+
+# ---- D35: exchange scaled per region pair; D36: the demag switch ----
+
+def coupled_problem(seed=1):
+    """random_problem plus a region map of ids 0–3 and a random symmetric pair table."""
+    p = random_problem(seed)
+    rng = np.random.default_rng(seed)
+    p["regions"] = rng.integers(0, 4, p["Ms"].shape).astype(np.uint8)
+    table = np.ones((256, 256))
+    table[:4, :4] = rng.uniform(0, 2, (4, 4))
+    p["coupling"] = (table + table.T) / 2
+    return p
+
+
+def coupled_field(p, m, device="cpu", coupling=None):
+    out = np.empty_like(m)
+    coupling = p["coupling"] if coupling is None else coupling
+    if device == "cpu":
+        mm.exchange_field(p["grid"], m, p["Ms"], p["A"], out, regions=p["regions"], coupling=coupling)
+    else:
+        prob = mm.Problem(p["grid"], p["Ms"], p["A"], p["K"], p["k"], H_EXT, device=device, regions=p["regions"], coupling=coupling)
+        prob.field("exchange", m, out)
+    return out
+
+
+def test_unit_pair_table_is_bitwise_the_plain_kernel(device):
+    p = coupled_problem()
+    plain = field("exchange", p, p["m"])
+    assert np.array_equal(coupled_field(p, p["m"], device, coupling=np.ones((256, 256))), field("exchange", p, p["m"], device))
+    assert np.array_equal(coupled_field(p, p["m"], "cpu", coupling=np.ones((256, 256))), plain)
+    assert not np.allclose(coupled_field(p, p["m"], device), plain)  # guard: the random table does change the field
+
+
+def test_pair_scale_on_a_three_cell_chain(device):
+    # Regions 1-2-2 along x: only the 1|2 face is scaled. H_i = 2/(µ0 Ms) Σ_faces w A (m_j - m_i) / dx² (eq. 8, D11, D35).
+    g = mm.Grid(3, 1, 1, 2e-9, 3e-9, 4e-9)
+    Ms, A, s = 8e5, 1e-11, 0.3
+    one = np.ones((1, 1, 3))
+    m = np.ascontiguousarray(np.array([[1.0, 0, 0], [0, 1, 0], [0, 0.6, 0.8]]).T.reshape(3, 1, 1, 3))
+    regions = np.array([1, 2, 2], np.uint8).reshape(1, 1, 3)
+    table = np.ones((256, 256))
+    table[1, 2] = table[2, 1] = s
+    p = dict(grid=g, Ms=Ms * one, A=A * one, K=0 * one, k=np.zeros((3, 1, 1, 3)), regions=regions, coupling=table)
+    pre = 2 * A / (mm.mu0 * Ms * g.dx**2)
+    m0, m1, m2 = m[:, 0, 0, 0], m[:, 0, 0, 1], m[:, 0, 0, 2]
+    expected = pre * np.stack([s * (m1 - m0), s * (m0 - m1) + (m2 - m1), m1 - m2], axis=1).reshape(3, 1, 1, 3)
+    assert np.allclose(coupled_field(p, m, device), expected, rtol=1e-14, atol=0)
+
+
+def test_coupled_field_is_minus_energy_gradient(device):
+    p = coupled_problem()
+    g, m = p["grid"], p["m"]
+    E = lambda m: mm.energy(g, m, p["Ms"], coupled_field(p, m, device), 0.5)
+    h = 1e-3
+    grad = np.empty_like(m)
+    for i in np.ndindex(m.shape):
+        mp, mn = m.copy(), m.copy()
+        mp[i] += h
+        mn[i] -= h
+        grad[i] = (E(mp) - E(mn)) / (2 * h)
+    expected = -mm.mu0 * p["Ms"] * g.dx * g.dy * g.dz * coupled_field(p, m, device)
+    assert not np.allclose(coupled_field(p, m, device), field("exchange", p, m))  # guard: the table is in use
+    assert np.linalg.norm(grad - expected) <= 1e-7 * np.linalg.norm(expected)
+
+
+def test_coupled_problem_matches_cpu_oracle(device):
+    # D26 tolerance; on "cpu" this is Problem against the free function.
+    p = coupled_problem()
+    expected = coupled_field(p, p["m"])
+    assert not np.allclose(expected, field("exchange", p, p["m"]))  # guard: the table is in use
+    H = np.empty_like(expected)
+    mm.Problem(p["grid"], p["Ms"], p["A"], p["K"], p["k"], H_EXT, device=device, regions=p["regions"],
+               coupling=p["coupling"]).field("exchange", p["m"], H)
+    assert np.abs(H - expected).max() <= 1e-14 * np.abs(expected).max()
+
+
+def test_binding_checks_regions_and_coupling():
+    p = coupled_problem()
+    out = np.empty_like(p["m"])
+    with pytest.raises(ValueError):  # one without the other
+        mm.exchange_field(p["grid"], p["m"], p["Ms"], p["A"], out, regions=p["regions"])
+    with pytest.raises(ValueError):
+        mm.exchange_field(p["grid"], p["m"], p["Ms"], p["A"], out, regions=p["regions"], coupling=np.ones((4, 4)))
+    with pytest.raises(TypeError):  # ids are uint8, as MuMax3's
+        mm.exchange_field(p["grid"], p["m"], p["Ms"], p["A"], out, regions=p["regions"].astype(np.int64), coupling=p["coupling"])
+
+
+def test_demag_switch(device):
+    p = random_problem()
+    m = p["m"]
+    on = mm.Problem(p["grid"], p["Ms"], p["A"], p["K"], p["k"], H_EXT, device=device)
+    off = mm.Problem(p["grid"], p["Ms"], p["A"], p["K"], p["k"], H_EXT, device=device, demag=False)
+    H = np.full_like(m, np.nan)
+    off.field("demag", m, H)
+    assert np.all(H == 0)
+    assert off.energies(m)["demag"] == 0 and on.energies(m)["demag"] != 0
+    total, rest = np.empty_like(m), np.zeros_like(m)
+    off.effective_field(m, total)
+    for term in ("exchange", "anisotropy", "zeeman"):
+        on.field(term, m, H)
+        rest += H
+    assert np.allclose(total, rest, rtol=0, atol=1e-12 * np.abs(rest).max())
+    on.effective_field(m, H)
+    assert not np.allclose(H, rest)  # guard: demag is on by default

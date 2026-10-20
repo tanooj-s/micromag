@@ -13,22 +13,22 @@ Each iteration is done when its check passes and its decisions are logged below.
 | 5 | GPU backend: CUDA kernels + cuFFT; the backend interface is introduced here | Every test passes with `device="cuda"` and the direct CPU-vs-GPU comparisons hold their D26 tolerances, run on at least one CUDA GPU of sm_70 or newer (which GPU is recorded). Nsight roofline numbers are optional (D25) | ✅ CPU + GPU (Tesla T4, CUDA 13.0, Colab, 2026-10-18; D26 Result) |
 | 6a | Workflow: one simulation from a TOML input card into a results folder (per-stage CSV thermo tables, an HDF5 dump of magnetic states, provenance) through `micromag run` and `micromag.run()` (D27, D28). **Requirement (user, 2026-10-17):** a simple local workflow, parameters in → results out, from an input file, without hand-editing a Python script, with the same entry point on any machine | `examples/sp4.toml` run through `run()` meets D20's SP4 criteria; fast tests of validation, the results folder, restarts, dumps and failure handling (D29) | ✅ (`tests/test_card.py`, `tests/test_run.py`; SP4 card with `-m slow`) |
 | 6b | Science runs: interim box material regions, field refinement near switching, a hysteresis summary (H_c, switching field, remanence), on a GPU; scaling study and Nsight optional (D25, D30, D31) | µMAG SP2 H_c and remanence vs d/l_ex against the exact limit and OOMMF 1.1; the pure 40 nm Nd₂Fe₁₄B cube against Fischbacher et al. 2017 (5.29 T); the Fig. 8a core–shell cube against the paper's finest-mesh curve (D32) | CPU checks ✅ (`tests/test_coercivity.py`, `-m slow`); the CUDA-only sizes and the recorded runs need a GPU |
-| 6c | Material regions on the MuMax3 model: a per-cell region map painted from named materials and shapes, 3D Voronoi grains with per-grain easy axes and an optional grain-boundary phase, exchange scaled per region pair, a demag switch (D33–D37) | Shapes' cell volumes → exact volumes under refinement; grain labels and the boundary layer against brute-force oracles (the two-seed slab exactly); exchange with a pair table bitwise unchanged at scale 1, against a hand-computed chain, still −∇E, CPU = CUDA; decoupled random-axis grains without demag: remanence exactly Σ n_g\|k̂_g·ĥ\| / Σ n_g and H_c within 5·10⁻³ H_K of a Stoner–Wohlfarth oracle for the same axes, both within 3σ of the isotropic 0.5 and 0.479 H_K; the migrated 25 nm core–shell cube still gives 2.721 T (D37) | todo |
+| 6c | Material regions on the MuMax3 model: a per-cell region map painted from named materials and shapes, 3D Voronoi grains with per-grain easy axes and an optional grain-boundary phase, exchange scaled per region pair, a demag switch (D33–D37) | Shapes' cell volumes → exact volumes under refinement; grain labels and the boundary layer against brute-force oracles (the two-seed slab exactly); exchange with a pair table bitwise unchanged at scale 1, against a hand-computed chain, still −∇E, CPU = CUDA; decoupled random-axis grains without demag: remanence exactly Σ n_g\|k̂_g·ĥ\| / Σ n_g and H_c within 5·10⁻³ H_K of a Stoner–Wohlfarth oracle for the same axes, both within 3σ of the isotropic 0.5 and 0.479 H_K; the migrated 25 nm core–shell cube still gives 2.721 T (D37) | CPU ✅ (`tests/test_regions.py`, `tests/test_fields.py`; ensemble with `-m slow`); CUDA compiles (Docker), the CPU = CUDA tests need a GPU run |
 | 6d | An original study using the 6b/6c tools: a question the paper only touches (e.g. shell thickness or anisotropy, field angle, a corner defect, grain-boundary coupling) | Set in the 6d design, after 6b is validated | todo |
 | 7 | Stretch, pick one: string method (NEB) / multi-GPU / thermal field (Voronoi grains moved to 6c) | — | — |
 
 ## Resume here
 State at the end of the 2026-10-18 session: everything is committed and pushed.
 - **Done:** iterations 1–5 (5 verified on a Tesla T4), 6a (the card → `micromag run` → results folder workflow), and 6b's CPU checks.
-- **Test counts:** `uv run pytest` gives 75 passed, 30 skipped (CUDA) and 19 deselected (slow). `-m slow` takes about 14 minutes on the laptop CPU, mostly the cube checks; the user chose to keep them on both devices (D32).
+- **Test counts (2026-10-20):** `uv run pytest` gives 105 passed, 35 skipped (CUDA) and 20 deselected (slow). `-m slow` takes about 15 minutes on the laptop CPU, mostly the cube checks; the user chose to keep them on both devices (D32).
 - **User plan:** start running simulations and logging results by **2026-10-19**. The run-and-record workflow is the priority.
 - **First thing next session:** ask which simulations the user wants to run first, and check the card covers them:
-  - regions are interim boxes only (D30)
+  - regions: named materials, shapes, Voronoi grains with a boundary phase, pair coupling (D33–D35); see `examples/grains.toml`
   - stages are `llg-dynamics`, `minimize` and `hysteresis`
   - there is no cross-run results table yet: each run is its own folder under the git-ignored `runs/`. A small `micromag summarize runs/*`, reading each `provenance.json` into one table, was suggested and not yet agreed.
 - **Open work, in rough order:**
   1. **6b on a GPU (Colab):** `uv run pytest -m slow -k coercivity -s` (SP2 at d/l_ex = 20 and 30, the 50 nm cube), then the recorded runs `examples/sp2.toml` (plus the other SP2 sizes) and `examples/cube_core_shell.toml`. Record the results in "Reference benchmarks"; then 6b is ✅.
-  2. **6c, material regions** (D33–D37): in progress since 2026-10-20.
+  2. **6c on a GPU:** the device-parametrised coupling and demag-switch tests (`uv run pytest -k "coupled or pair or demag_switch"`) on Colab, then 6c is ✅ on both devices.
   3. **The 6d design:** an original study using the 6b/6c tools.
   4. **Iteration 7** (stretch).
 - **Run a card:** `uv run micromag run examples/sp4.toml -o runs/sp4` (add `--device cuda` on a GPU machine).
@@ -156,6 +156,10 @@ Source: https://www.ctcms.nist.gov/~rdm/std2/spec2.html and `results.html` (fetc
   - results, read off the figure at 600 dpi on the finest mesh (1.3 nm): µ₀H_c ≈ 2.76 T at 25 nm, 2.71 T at 50 nm, 2.58 T at 100 nm.
   - mesh dependence: the 4 nm mesh sits up to 0.13 T higher, and the curve falls by about 0.002 T per nm.
 - **Ours (iteration 6b, CPU, field 1° off z):** the pure 40 nm cube (cells of 1.33 nm) switches at 5.275 T (−0.3%); the 25 nm core–shell cube (1 nm cells) has H_c = 2.721 T (Fig. 8a: 2.76 T).
+
+### Stoner–Wohlfarth ensemble of randomly oriented particles
+- **Stoner & Wohlfarth (1948)**, non-interacting uniaxial particles with isotropic easy axes: remanence M_r = 0.5 M_s and coercivity H_c = 0.479 H_K (H_K = 2K/(µ₀M_s)).
+- **Ours (iteration 6c, CPU):** 255 decoupled Voronoi grains without demag give M_r = 0.4705 M_s and H_c = 0.4627 H_K. Both are within 3σ of the isotropic values for this finite draw of axes, and both agree with the per-axis oracle to 10⁻⁷ (D37).
 
 ## Decision log
 <!-- Format, one entry per decision:
@@ -729,3 +733,17 @@ Source: https://www.ctcms.nist.gov/~rdm/std2/spec2.html and `results.html` (fetc
 - **Regression:** the 6b core–shell cube test (25 nm, 2.721 T) runs unchanged in the new syntax.
 - **Alternatives:** only the statistical 0.5/0.479 check: about 12% wide at 255 grains, too loose to catch real bugs; the per-axis oracle is exact.
 - **Consequence:** the headline physics check is analytic and runs on the CPU in the slow suite.
+- **Result (2026-10-20, laptop CPU):**
+  - fast suite: 105 passed, 35 skipped (CUDA), 20 deselected; all region, grain, boundary and coupling checks pass
+  - ensemble (255 grains on 40³ cells, 58 fields, 32 s): remanence 0.47049 against the exact 0.47049 for these axes (difference 3·10⁻¹⁴); H_c = 0.46273 H_K against the oracle's 0.46273 (difference 7·10⁻⁸). Both within 3σ of the isotropic values: 0.5 ± 0.020 and 0.479 ± 0.014
+  - regression: the migrated 25 nm core–shell cube gives 2.721 T, unchanged; SP2, the pure cube, SP3 and SP4 are unchanged too (full slow suite 15 min)
+  - `examples/grains.toml` (8 grains, 32% boundary phase by volume, 20³ cells): H_c = 3.616 T in 72 s
+  - CUDA: compiles in Docker (CUDA 12.1); not yet run on a GPU
+- **Mutation check:** each bug was planted alone; every one was caught by the fast tests.
+  - Boundary threshold at the full thickness instead of half: caught by the sampled-distance oracle.
+  - Plane distance without its factor 2: caught by the mirrored pair and the oracle.
+  - Pair table filled one way only: caught by the coupling-table test.
+  - Cone axes uniform in θ instead of cos θ: caught by the axes test.
+  - Pair table row stride 255 instead of 256 (C++): caught by the 3-cell chain and the gradient test.
+  - Scale applied inside regions instead of between them (C++): caught only by the 3-cell chain; the oracle shares the code, and the operator stays symmetric.
+  - Demag kept in `effective_field`, or in the energies, when switched off: caught by the demag-switch test.

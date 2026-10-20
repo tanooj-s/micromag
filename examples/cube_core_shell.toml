@@ -1,23 +1,28 @@
 # The core–shell Nd2Fe14B cube of Fischbacher et al. 2018, Fig. 8a, at a grain size (outer edge) of 100 nm.
 # Core: K = 4.9 MJ/m³, µ0 Ms = 1.61 T, A = 8 pJ/m. Shell: 3 nm of Nd40Fe60, K = 0, µ0 Ms = 0.477 T, A = 6.12 pJ/m.
 # The field is 1° off the easy axis z, the group's convention for cubes (D32). Fig. 8a's finest mesh gives µ0 Hc ≈ 2.58 T.
-# Other sizes: change n and the core box's upper corner (edge - 3 nm). 10^6 cells: run it on a GPU.
+# Other sizes: change n and the core's upper corner (edge - 3 nm). 10^6 cells: run it on a GPU.
 
 [grid]
 n    = [100, 100, 100]
 cell = [1e-9, 1e-9, 1e-9]   # m: the shell is exactly 3 cells
 
-[material]                  # the shell fills the grid ...
+[material.shell]            # listed first, so it fills the grid (region 0) ...
 Ms = 379584.53927417035     # A/m (µ0 Ms = 0.477 T)
 A  = 6.12e-12               # J/m
 K  = 0.0
 
-[[region]]                  # ... and the core overwrites all but 3 nm of it (D30)
-box = [[3e-9, 3e-9, 3e-9], [97e-9, 97e-9, 97e-9]]
+[material.core]
 Ms   = 1281197.2918897576   # A/m (µ0 Ms = 1.61 T)
 A    = 8e-12                # J/m
 K    = 4.9e6                # J/m³
 axis = [0, 0, 1]
+
+[[region]]                  # ... and the core is painted over all but 3 nm of it (D33)
+id       = 1
+material = "core"
+shape    = "cuboid"
+corners  = [[3e-9, 3e-9, 3e-9], [97e-9, 97e-9, 97e-9]]
 
 [initial]
 m = [0.01745240643728351, 0.0, 0.9998476951563913]

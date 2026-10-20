@@ -61,8 +61,10 @@ private:
     double* p_;
 };
 
-// Both copy the materials.
-std::unique_ptr<Backend> make_cpu_backend(const Grid& g, const double* Ms, const double* A, const double* K, const double* k);
+// Both copy the materials, and the region map and pair table when given (D35; both or neither).
+std::unique_ptr<Backend> make_cpu_backend(const Grid& g, const double* Ms, const double* A, const double* K, const double* k,
+                                          const uint8_t* region, const double* pair);
 #ifdef MICROMAG_CUDA
-std::unique_ptr<Backend> make_cuda_backend(const Grid& g, const double* Ms, const double* A, const double* K, const double* k);
+std::unique_ptr<Backend> make_cuda_backend(const Grid& g, const double* Ms, const double* A, const double* K, const double* k,
+                                          const uint8_t* region, const double* pair);
 #endif

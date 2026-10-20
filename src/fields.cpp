@@ -5,7 +5,9 @@ static double harmonic_mean(double a, double b) { return a + b > 0 ? 2 * a * b /
 
 // eq. 8: H = 2/(µ0 Ms) ∇·(A ∇m), discretised as the 6-neighbour sum of A_face (m_j - m_i) / d².
 // Missing (boundary) or vacuum neighbours contribute nothing: free (Neumann) surfaces (D11).
-void exchange_field(const Grid& g, const double* m, const double* Ms, const double* A, double* H) {
+// With a region map, a face between unlike regions r_i, r_j is scaled by pair[r_i, r_j] (D35).
+void exchange_field(const Grid& g, const double* m, const double* Ms, const double* A, double* H, const uint8_t* region,
+                    const double* pair) {
     const size_t n = g.n(), sy = g.nx, sz = g.nx * g.ny;
     for (size_t z = 0; z < g.nz; ++z)
         for (size_t y = 0; y < g.ny; ++y)
@@ -14,7 +16,8 @@ void exchange_field(const Grid& g, const double* m, const double* Ms, const doub
                 double h[3] = {0, 0, 0};
                 auto add = [&](size_t j, double d) {
                     if (Ms[j] == 0) return;
-                    const double w = harmonic_mean(A[i], A[j]) / (d * d);
+                    double w = harmonic_mean(A[i], A[j]) / (d * d);
+                    if (region && region[i] != region[j]) w *= pair[region[i] * n_regions + region[j]];
                     for (size_t c = 0; c < 3; ++c) h[c] += w * (m[c * n + j] - m[c * n + i]);
                 };
                 if (Ms[i] != 0) {
