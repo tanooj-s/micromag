@@ -13,8 +13,9 @@ Each iteration is done when its check passes and its decisions are logged below.
 | 5 | GPU backend: CUDA kernels + cuFFT; the backend interface is introduced here | Every test passes with `device="cuda"` and the direct CPU-vs-GPU comparisons hold their D26 tolerances, run on at least one CUDA GPU of sm_70 or newer (which GPU is recorded). Nsight roofline numbers are optional (D25) | ✅ CPU + GPU (Tesla T4, CUDA 13.0, Colab, 2026-10-18; D26 Result) |
 | 6a | Workflow: one simulation from a TOML input card into a results folder (per-stage CSV thermo tables, an HDF5 dump of magnetic states, provenance) through `micromag run` and `micromag.run()` (D27, D28). **Requirement (user, 2026-10-17):** a simple local workflow, parameters in → results out, from an input file, without hand-editing a Python script, with the same entry point on any machine | `examples/sp4.toml` run through `run()` meets D20's SP4 criteria; fast tests of validation, the results folder, restarts, dumps and failure handling (D29) | ✅ (`tests/test_card.py`, `tests/test_run.py`; SP4 card with `-m slow`) |
 | 6b | Science runs: interim box material regions, field refinement near switching, a hysteresis summary (H_c, switching field, remanence), on a GPU; scaling study and Nsight optional (D25, D30, D31) | µMAG SP2 H_c and remanence vs d/l_ex against the exact limit and OOMMF 1.1; the pure 40 nm Nd₂Fe₁₄B cube against Fischbacher et al. 2017 (5.29 T); the Fig. 8a core–shell cube against the paper's finest-mesh curve (D32) | CPU checks ✅ (`tests/test_coercivity.py`, `-m slow`); the CUDA-only sizes and the recorded runs need a GPU |
-| 6c | An original study using the 6b tools: a question the paper only touches (e.g. shell thickness or anisotropy, field angle, a corner defect) | Set in the 6c design, after 6b is validated | todo |
-| 7 | Stretch, pick one: Voronoi grains / string method (NEB) / multi-GPU / thermal field | — | — |
+| 6c | Material regions on the MuMax3 model: a per-cell region map painted from named materials and shapes, 3D Voronoi grains with per-grain easy axes and an optional grain-boundary phase, exchange scaled per region pair, a demag switch (D33–D37) | Shapes' cell volumes → exact volumes under refinement; grain labels and the boundary layer against brute-force oracles (the two-seed slab exactly); exchange with a pair table bitwise unchanged at scale 1, against a hand-computed chain, still −∇E, CPU = CUDA; decoupled random-axis grains without demag: remanence exactly Σ n_g\|k̂_g·ĥ\| / Σ n_g and H_c within 5·10⁻³ H_K of a Stoner–Wohlfarth oracle for the same axes, both within 3σ of the isotropic 0.5 and 0.479 H_K; the migrated 25 nm core–shell cube still gives 2.721 T (D37) | todo |
+| 6d | An original study using the 6b/6c tools: a question the paper only touches (e.g. shell thickness or anisotropy, field angle, a corner defect, grain-boundary coupling) | Set in the 6d design, after 6b is validated | todo |
+| 7 | Stretch, pick one: string method (NEB) / multi-GPU / thermal field (Voronoi grains moved to 6c) | — | — |
 
 ## Resume here
 State at the end of the 2026-10-18 session: everything is committed and pushed.
@@ -27,8 +28,8 @@ State at the end of the 2026-10-18 session: everything is committed and pushed.
   - there is no cross-run results table yet: each run is its own folder under the git-ignored `runs/`. A small `micromag summarize runs/*`, reading each `provenance.json` into one table, was suggested and not yet agreed.
 - **Open work, in rough order:**
   1. **6b on a GPU (Colab):** `uv run pytest -m slow -k coercivity -s` (SP2 at d/l_ex = 20 and 30, the 50 nm cube), then the recorded runs `examples/sp2.toml` (plus the other SP2 sizes) and `examples/cube_core_shell.toml`. Record the results in "Reference benchmarks"; then 6b is ✅.
-  2. **The 6c design:** an original study using the 6b tools.
-  3. **The material-regions design** ("Open design: material regions", R1–R9). Not started; boxes are the stopgap.
+  2. **6c, material regions** (D33–D37): in progress since 2026-10-20.
+  3. **The 6d design:** an original study using the 6b/6c tools.
   4. **Iteration 7** (stretch).
 - **Run a card:** `uv run micromag run examples/sp4.toml -o runs/sp4` (add `--device cuda` on a GPU machine).
 - **Optional:** the cluster is one GPU target among many (D25). Its build needs numpy and h5py capped at versions with glibc 2.17 wheels (see the optional open issue below).
@@ -61,43 +62,11 @@ State at the end of the 2026-10-18 session: everything is committed and pushed.
 - **After that:** the CMake log should report `The CXX compiler identification is GNU 8.4.0`. If it shows 4.8.5, `export CXX=g++`. The cmake and ninja wheels from PyPI still support glibc 2.17.
 - Already fixed: home-directory quota (uv cache moved to scratch) and the empty `CUDA_ARCHITECTURES`.
 
-## Open design: material regions (no decisions yet, 2026-10-18)
-Discussed and saved for later. 6b uses interim boxes (D30).
-- **What "robust" means here:**
-  - any shape, with no solver change
-  - no ambiguity: one material per cell, a fixed rule for overlaps, explicit vacuum
-  - checkable: staircasing must be visible (a 3 nm shell on 1 nm cells comes out as 2 or 3 cells depending on alignment)
-  - resolution-independent: shapes given in metres
-  - room for physics that depends on regions (coupling between grains, a different axis per grain)
-- **Precedents:**
-  - **OOMMF:** "atlases" map geometry to named regions (box, image or scripted atlases); materials are given per region, and A per pair of regions.
-  - **MuMax3:** primitive shapes combined into up to 256 numbered regions, Voronoi grains via `ext_makegrains`, inter-grain coupling via `ext_ScaleExchange` / `ext_InterExchange`.
-  - **MagTense:** explicit tile lists.
-  - **This paper (FEM):** Neper and Salome. The boundary phase is made "by moving the grain surfaces by a fixed distance along their surface normal" (§2.3.2).
-- **Candidate design:** a per-cell **region-label map** is the only geometry the solver sees.
-  - It is built either from shapes in the card, painted in order with later shapes winning (`all`, `box`, `ellipsoid`; union and difference come from the painting order), or loaded from an h5 label file (Voronoi grains, voxelised CAD, images).
-  - Materials are named (`[material.<name>]`), with a built-in `vacuum`.
-  - A cell belongs to a shape if its centre is inside.
-  - A check compares each shape's exact volume with its volume in cells.
-  - Coordinates are measured from the grid's lower corner.
-  - The map is saved in `trajectory.h5`.
-- **Interphase between grains: two physical models.**
-  - **(1) A volume layer** with its own Ms, A and K: the paper's 3 nm coat per grain, giving 6 nm between grains and 3 nm at the outer surface. It would be a `shell` operation using a distance transform (e.g. `scipy.ndimage`). It needs no solver change and requires a thickness of at least 2 cells.
-  - **(2) A zero-thickness coupling scaled per region pair** (MuMax3, OOMMF). This is an exchange-kernel change on both backends, worth it only for boundaries thinner than a cell.
-- **Orientation:** anisotropy is K and the easy axis k̂ per cell (eq. 9), and a grain's orientation *is* its k̂. The solver already stores k̂ per cell (D9).
-  - A is isotropic exchange (eq. 8). It affects orientation only through the coupling across boundaries (harmonic mean, D11).
-  - Possible card support: per-region `axis` overrides, per-label axes in label files, and random orientation spreads in a grain generator (iteration 7).
-  - Only uniaxial anisotropy is supported.
-- **Open questions:**
-  - R1: a label map, or materials painted directly into per-cell arrays?
-  - R2: shapes in the card, label files, or both?
-  - R3: centre membership plus the volume check (default 5%), or partial-volume weighting?
-  - R4: named materials, a built-in vacuum, and painting order for overlaps?
-  - R5: coordinates from the lower corner or from the centre?
-  - R6: an interphase `shell` operation (a layer coating each grain)?
-  - R7: defer the zero-thickness pair coupling?
-  - R8: scipy, or our own distance transform?
-  - R9: per-region `axis` overrides?
+## Material regions: settled 2026-10-20 (D33–D37)
+The open design (R1–R9, 2026-10-18) was first approached from first principles; the user then chose to copy MuMax3's model. How each question was answered:
+- R1 label map: yes, `uint8`, as MuMax3 (D33). R2 shapes in the card; label files deferred (D33). R3 centre membership, with each shape's exact and painted volume in provenance (D33).
+- R4 named materials, built-in `vacuum`, later paints win (D33). R5 lower corner, unchanged from D30.
+- R6 interphase: a grain-boundary phase in the grain generator, by an exact distance rule (D34). R7 zero-thickness pair coupling: done, as MuMax3 (D35). R8 no distance transform needed (D34). R9 per-region `axis` overrides: yes (D33).
 
 ## MagTense weaknesses we want to avoid
 - One 3,500-line Fortran module holds global `gb_problem` and `gb_solution` state, so solves are not re-entrant.
@@ -640,6 +609,7 @@ Source: https://www.ctcms.nist.gov/~rdm/std2/spec2.html and `results.html` (fetc
   - Region values are written into the per-cell arrays the solver already takes (D9), so the solver doesn't change.
 - **Alternatives:** the full label-map design (deferred by the user until it's thought through); named materials (part of the open design).
 - **Consequence:** small, and enough for core–shell cubes. **Expected to be refactored** when the open region design is settled; cards using `[[region]]` may need updating then.
+- **Superseded (2026-10-20):** by D33. The box form is removed, and the examples and tests are migrated.
 
 ### D31: Hysteresis refinement and summary (2026-10-18)
 - **Context:** coercivity needs the field resolved to about 10⁻⁴ Ms near the switch (SP2), which takes about 600 steps with a fixed fine step. For small films, H_c (where m·ĥ = 0) and the switching field (the jump) differ by only 0.1% (0.05707 vs 0.05714).
@@ -695,3 +665,67 @@ Source: https://www.ctcms.nist.gov/~rdm/std2/spec2.html and `results.html` (fetc
   - Halving without restoring the state from before the step: caught by both Stoner–Wohlfarth cases.
   - Remanence taken from the last row: caught by both.
 - **Still to run on a GPU:** SP2 at d/l_ex = 20 and 30, the 50 nm cube, the full SP2 curve and the 100 nm cube.
+
+
+### D33: Material regions on the MuMax3 model (supersedes D30) (2026-10-20)
+- **Context:** grain structures need arbitrary shapes, many grains with their own easy axes, and boundary phases. The user chose MuMax3's region model over a from-scratch design.
+- **Decision:**
+  - The geometry the solver sees is a per-cell **region map** of `uint8` ids (0–255), as in MuMax3. It is expanded in Python into the per-cell Ms, A, K, axis arrays (D9), and into the pair table of D35.
+  - Materials are named: `[material.<name>]` with Ms (≥ 0), A, K, axis. `vacuum` is built in (Ms = 0, D11) and reserved. A card needs at least one material; the flat `[material]` form is gone.
+  - Region 0 is the background: every cell starts in it, with the first material listed.
+  - `[[region]]` entries have `id` (1–255), `material`, `shape`, the shape's keys, optional `inverse` (paint the complement) and optional `axis` (overrides the material's). They are painted in card order and later paints win, as MuMax3's `DefRegion`. An id may be painted more than once, but always with the same material and axis.
+  - Shapes, in metres from the grid's lower corner: `all`; `cuboid` with `corners = [[x0, y0, z0], [x1, y1, z1]]` (lower bounds in, upper out, as D30); `cylinder` along z with `center`, `radius`, `height`; `ellipsoid` with `center` and `semi_axes`. A cell is inside if its centre is.
+  - Vacuum is a region with material `vacuum`; there is no separate geometry mask (MuMax3's `SetGeom`).
+  - The map is saved in `trajectory.h5` as `regions` with the id → material names as an attribute. Provenance lists each `[[region]]` with its exact volume (null for `all` and inverted shapes) and its painted volume in cells, so staircasing and clipping are visible; a mismatch over 5% is warned on stderr.
+- **Alternatives:**
+  - MuMax3's combinators (add, sub, intersect, xor, rotate, translate): painting order plus `inverse` covers the cards we have. Translation is meaningless when every shape has a `center`.
+  - Label files (h5 maps from elsewhere): deferred until a card needs one.
+  - Partial-volume weighting of edge cells (MuMax3's `EdgeSmooth`): changes the solver; staircasing is visible in provenance instead.
+  - Keeping the flat `[material]` as a shorthand: two forms to document and test.
+- **Consequence:** the solver is unchanged by shapes. Every card has to name its materials, so the examples and tests were migrated.
+
+### D34: 3D Voronoi grains with a grain-boundary phase (2026-10-20)
+- **Context:** the paper's microstructures are polycrystals: grains with random or textured easy axes, coated by a few nm of boundary phase. MuMax3's `ext_makegrains` is 2D (Voronoi in xy, extruded along z) and reuses region ids, because 256 regions are shared by all grains.
+- **Decision:**
+  - One optional `[grains]` table: `count` seeds, `first_id` (ids first_id … first_id + count − 1 must fit in 1–255 and not clash with `[[region]]` ids), `material`, `seed` (the RNG seed), optional `within` (a region id; default 0).
+  - Grains are applied after all `[[region]]` painting. Seeds are drawn uniformly over the grid box and kept if they fall in a cell of `within`, until `count` are kept. Each cell of `within` joins the grain of its nearest seed (3D Voronoi, by its centre).
+  - Each grain has its own id, so the pair table can couple grains individually. That departs from MuMax3, which reuses ids.
+  - Easy axes per grain: `axes = "material"` (the default), `"random"` (uniform on the sphere) or `{mean = [...], cone_deg = θ}` (uniform over the spherical cap of half-angle θ about mean).
+  - Optional `boundary = {thickness, material, id}`: a grain-boundary phase, the paper's coat. A cell of grain i whose distance to the grain's Voronoi boundary is below thickness/2 joins the boundary region. The distance is exact: for a point inside a convex cell, it is the smallest distance to the cell's bounding planes, min over j ≠ i of (|x − s_j|² − |x − s_i|²) / (2 |s_j − s_i|). The thickness must be at least 2 cells (the largest cell edge); the card error points to `[[coupling]]` for thinner boundaries.
+  - Plain numpy, chunked over cells (cells × seeds work, about 3·10⁸ for 10⁶ cells and 255 grains).
+- **Alternatives:**
+  - MuMax3's `grainsize`: a seed count from a grain size is the same thing said indirectly, and `count` makes the id range explicit.
+  - A distance transform (scipy.ndimage) for the boundary: approximate on the grid, a new dependency, and resolution-dependent; the exact plane formula is none of these.
+  - A coat on the outer surface of the grained region too (the paper has 3 nm there): not between grains; painting covers it.
+  - Seeds on cell centres: resolution-dependent grains.
+- **Consequence:** at most 255 grains in one card. The boundary region is an ordinary region, so `[[coupling]]` can scale grain ↔ boundary exchange too.
+
+### D35: Exchange scaled per region pair (2026-10-20)
+- **Context:** a boundary phase thinner than a cell cannot be painted. MuMax3 handles it with `ext_ScaleExchange` and `ext_InterExchange`, a 256 × 256 table that replaces the coupling across faces between two regions.
+- **Decision:**
+  - `[[coupling]]` entries: `regions = [a, b]` (ids, or `"grains"` for every grain id) and exactly one of `scale` (≥ 0, multiplies D11's harmonic mean) or `A` (≥ 0, the face A, J/m). `A` is converted to a scale in Python, since each id has one material. Pairs with a ≠ b only; later entries win.
+  - The kernel takes an optional region map and a 256 × 256 scale table: the face weight is `harmonic_mean(A_i, A_j) · scale[r_i, r_j]` when r_i ≠ r_j. Without a table, the kernel is exactly the old one. Both backends.
+  - `Problem(..., regions=None, coupling=None)` and `exchange_field(..., regions=None, coupling=None)` take them.
+- **Alternatives:**
+  - Per-face A arrays (3n doubles): general but 3× the memory of A, and no card needs a face that is not a region boundary.
+  - Scaling only the A of the cells next to the boundary: changes those cells' coupling within their own region too.
+- **Consequence:** one multiply per face across region boundaries. The table is symmetric, so the operator stays symmetric (H is still −∇E).
+
+### D36: A switch for demag (2026-10-20)
+- **Context:** the Stoner–Wohlfarth ensemble check (D37) needs grains that interact only through exchange, which is set to zero there.
+- **Decision:** `[grid] demag = true` (the default) and `Problem(..., demag=True)`. With `false`, the demag field is zero everywhere: `effective_field` skips it, and `field("demag")` and the demag energy return 0.
+- **Alternatives:** a test-only flag: cards could not express the same check. Not building the demag workspace when it is off: setup time only, not worth a second constructor path.
+- **Consequence:** the demag tensor is still computed when demag is off.
+
+### D37: Iteration-6c checks (2026-10-20)
+- **Painting:** an ellipsoid's and a z-cylinder's cell volume tends to the exact volume (|V_cells/V − 1| ≤ dx/R at R/dx = 8, 16, 32); overlapping regions, `inverse`, axis overrides, vacuum and the background as expected cell by cell; the D30 test rewritten in the new syntax.
+- **Grains:** every cell of `within` carries its nearest seed's id (against a brute-force oracle), and nothing outside changes; the same seed gives the same grains; `"random"` axes have ⟨|k̂·ĥ|⟩ = 1/2 and cone axes stay inside the cap.
+- **Boundary phase:** two seeds mirrored across a plane give a slab of exactly thickness/dx cell layers; with several seeds, the boundary cells match a brute-force distance oracle: the distance to the nearest point of a 4× finer sampling that belongs to another grain, within the fine spacing.
+- **Coupling kernel:** with all scales 1 the field is bitwise identical to no table; a 3-cell chain of regions 1-2-2 with scale s matches the hand-computed 2 s A (m_j − m_i) / (µ0 Ms d²); with a random symmetric table, H = −∇E / (µ0 Ms dV) by finite differences; CPU = CUDA (D26).
+- **Ensemble (slow):** 255 grains on 40³ cells, `"random"` axes, all grain pairs at scale 0, no demag, saturated along z then a hysteresis stage down to −1.2 H_K. Each grain is then an exact Stoner–Wohlfarth particle: with no demag and no coupling, a uniform grain stays uniform. Pass:
+  - remanence ⟨m·ĥ⟩ within 10⁻⁴ of Σ n_g |k̂_g·ĥ| / Σ n_g (n_g: the grain's cells), exact for these axes
+  - H_c within 5·10⁻³ H_K of a 1D Stoner–Wohlfarth oracle (gradient flow of e(φ) = ½ sin²(φ − ψ_g) − h cos φ per grain, cell-weighted) for the same axes
+  - both within 3σ of the isotropic Stoner–Wohlfarth (1948) values, M_r/M_s = 0.5 and H_c = 0.479 H_K, with σ from the cell-weighted spread of the drawn axes
+- **Regression:** the 6b core–shell cube test (25 nm, 2.721 T) runs unchanged in the new syntax.
+- **Alternatives:** only the statistical 0.5/0.479 check: about 12% wide at 255 grains, too loose to catch real bugs; the per-axis oracle is exact.
+- **Consequence:** the headline physics check is analytic and runs on the CPU in the slow suite.
