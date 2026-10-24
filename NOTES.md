@@ -17,23 +17,26 @@ Each iteration is done when its check passes and its decisions are logged in `DE
 | 6a | Workflow: one simulation from a TOML input card into a results folder (per-stage CSV thermo tables, an HDF5 dump of magnetic states, provenance) through `micromag run` and `micromag.run()` (D27, D28). **Requirement (user, 2026-10-17):** a simple local workflow, parameters in → results out, from an input file, without hand-editing a Python script, with the same entry point on any machine | `examples/sp4.toml` run through `run()` meets D20's SP4 criteria; fast tests of validation, the results folder, restarts, dumps and failure handling (D29) | ✓ (`tests/test_card.py`, `tests/test_run.py`; SP4 card with `-m slow`) |
 | 6b | Science runs: interim box material regions, field refinement near switching, a hysteresis summary (H_c, switching field, remanence), on a GPU; scaling study and Nsight optional (D25, D30, D31) | µMAG SP2 H_c and remanence vs d/l_ex against the exact limit and OOMMF 1.1; the pure 40 nm Nd₂Fe₁₄B cube against Fischbacher et al. 2017 (5.29 T); the Fig. 8a core–shell cube against the paper's finest-mesh curve (D32) | ✓ CPU + GPU (Colab T4, 2026-10-20), except SP2 at d/l_ex = 30: −1.3% against a 1% tolerance, accepted as a known miss (xfail) pending a cell-size study (D32) |
 | 6c | Material regions on the MuMax3 model: a per-cell region map painted from named materials and shapes, 3D Voronoi grains with per-grain easy axes and an optional grain-boundary phase, exchange scaled per region pair, a demag switch (D33–D37) | Shapes' cell volumes → exact volumes under refinement; grain labels and the boundary layer against brute-force oracles (the two-seed slab exactly); exchange with a pair table bitwise unchanged at scale 1, against a hand-computed chain, still −∇E, CPU = CUDA; decoupled random-axis grains without demag: remanence exactly Σ n_g\|k̂_g·ĥ\| / Σ n_g and H_c within 5·10⁻³ H_K of a Stoner–Wohlfarth oracle for the same axes, both within 3σ of the isotropic 0.5 and 0.479 H_K; the migrated 25 nm core–shell cube still gives 2.721 T (D37) | ✓ CPU + GPU (`tests/test_regions.py`, `tests/test_fields.py`; ensemble with `-m slow`; Colab T4, 2026-10-20) |
-| 6d | An original study using the 6b/6c tools: a question the paper only touches (e.g. shell thickness or anisotropy, field angle, a corner defect, grain-boundary coupling) | Set in the 6d design, after 6b is validated | todo |
-| 7 | Stretch, pick one: string method (NEB) / multi-GPU / thermal field (Voronoi grains moved to 6c) | — | — |
+| 6d | An original study using the 6b/6c tools: a question the paper only touches (e.g. shell thickness or anisotropy, field angle, a corner defect, grain-boundary coupling) | Set in the 6d design, after 6b is validated | shelved (D40): optional, not required |
+| 7 | Thermal field: Brown's stochastic field in LLG (eq. 25), at the same cells and time step as the dynamics (D40) | Set in the iteration-7 design | todo (next) |
+| 8 | Stretch, optional: string method (energy barriers) / multi-GPU | — | — |
 
 ## Resume here
-State at the end of the 2026-10-20 session: everything is committed and pushed.
+State at the end of the 2026-10-23 session: everything is committed and pushed.
 - **Done:** iterations 1–5 (5 verified on a Tesla T4), 6a (the card → `micromag run` → results folder workflow), 6b and 6c on CPU and GPU.
-- **Docs (D39, 2026-10-20):** README.md, docs/ (cards, results, verification, architecture, gpu), GPL-3.0 LICENSE, CPU CI on GitHub Actions. 6d is shelved for later (user, 2026-10-20).
+- **Docs (D39, 2026-10-20):** README.md, docs/ (cards, results, verification, architecture, gpu), GPL-3.0 LICENSE, CPU CI on GitHub Actions. 6d is optional and no longer required (D40).
 - **Test counts (2026-10-20):** `uv run pytest` gives 105 passed, 35 skipped (CUDA) and 20 deselected (slow) on the laptop; 139 passed and 1 skipped on a Colab T4. The GPU slow coercivity tests give 6 passed and SP2 d/l_ex = 30 xfail (20 min). `-m slow` takes about 15 minutes on the laptop CPU, mostly the cube checks; the user chose to keep them on both devices (D32).
-- **User plan:** start running simulations and logging results by **2026-10-19**. The run-and-record workflow is the priority.
-- **First thing next session:** ask which simulations the user wants to run first, and check the card covers them:
+- **Next requirement (user, 2026-10-23):** the thermal field, iteration 7 (D40). Thermal effects are treated at the same continuum scale the dynamics run at.
+- **First thing next session:** start the iteration-7 design through the usual workflow: the physics in plain terms, design questions in rounds, then decision entries. D40's Consequence lists the open questions.
+- **Card coverage for runs:** before a run, check the card covers it:
   - regions: named materials, shapes, Voronoi grains with a boundary phase, pair coupling (D33–D35); see `examples/grains.toml`
   - stages are `llg-dynamics`, `minimize` and `hysteresis`
   - there is no cross-run results table yet: each run is its own folder under the git-ignored `runs/`. A small `micromag summarize runs/*`, reading each `provenance.json` into one table, was suggested and not yet agreed.
 - **Open work, in rough order:**
-  1. **SP2 d/l_ex = 30 cell-size study** (the user's call: a fundamental scaling study to keep, 2026-10-20). Run H_c/Ms at d/l_ex = 30 with nz = 3, 4, 5, 7 cells through the thickness on a GPU; nz = 5 is OOMMF 1.1's 0.60 l_ex, and nz = 6 (0.5 l_ex) gave 0.04533. If nz = 5 lands within 1% of 0.04594, the test should use OOMMF's cell; otherwise the references disagree at this size. A 6d candidate. The script is the `sp2_conv.py` cell below.
-  2. **The 6d design:** an original study using the 6b/6c tools.
-  3. **Iteration 7** (stretch).
+  1. **Iteration 7, the thermal field** (D40).
+  2. **SP2 d/l_ex = 30 cell-size study** (the user's call: a fundamental scaling study to keep, 2026-10-20). Run H_c/Ms at d/l_ex = 30 with nz = 3, 4, 5, 7 cells through the thickness on a GPU; nz = 5 is OOMMF 1.1's 0.60 l_ex, and nz = 6 (0.5 l_ex) gave 0.04533. If nz = 5 lands within 1% of 0.04594, the test should use OOMMF's cell; otherwise the references disagree at this size. A 6d candidate. The script is the `sp2_conv.py` cell below.
+  3. **The 6d design** (optional, D40): an original study using the 6b/6c tools.
+  4. **Iteration 8** (stretch, optional): string method / multi-GPU.
 - **Optional recorded runs** (D32 Correction): the full SP2 curve and the 100 nm core–shell cube (`examples/sp2.toml`, `examples/cube_core_shell.toml`), for benchmark data only.
 - **Run a card:** `uv run micromag run examples/sp4.toml -o runs/sp4` (add `--device cuda` on a GPU machine).
 - **Optional:** the cluster is one GPU target among many (D25). Its build needs numpy and h5py capped at versions with glibc 2.17 wheels (see the optional open issue below).

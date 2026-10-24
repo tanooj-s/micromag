@@ -631,3 +631,17 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
   - Per-file GPL headers: suggested by the GPL, not required; the LICENSE file and the package metadata suffice.
 - **Consequence:** docs can drift from the code, so the CLAUDE.md rule ties them together. The hero PNGs have to be regenerated when the grains example or its result changes. GPL-3.0 means derived distributions must stay open.
 
+
+### D40: The thermal field is the next iteration; 6d becomes optional (2026-10-23)
+- **Context:** 6a–6c are done. The candidates for iteration 7 were the string method, a thermal field and multi-GPU. The user requires that any treatment of thermal effects be at the same continuum scale the dynamics run at.
+- **Decision:** iteration 7 is a thermal field: a Gaussian white-noise field added to H_eff in eq. 25, with a variance set by α, T, Ms, the cell volume and the time step (Brown 1963), on the existing grid. 6d is no longer required, since the project doesn't aim to replicate every result in the paper. The string method and multi-GPU move to an optional iteration 8.
+- **Alternatives:**
+  - String method first: reuses the minimizer, has deterministic tests, and has the paper's Fig. 7 cube as a benchmark. It gives energy barriers, not dynamics at temperature.
+  - Multi-GPU: pays off only beyond about 10⁷ cells per V100. Slurm arrays already run independent jobs in parallel.
+  - 6d first: not needed.
+- **Consequence (open questions for the iteration-7 design):**
+  - A fixed-step stochastic integrator (e.g. Heun) alongside the adaptive RK45 (D18), which can't take noise.
+  - Random numbers reproducible on CPU and CUDA, so the CPU stays the oracle (e.g. counter-based Philox).
+  - Statistical tests (the Boltzmann distribution, Brown's macrospin escape time) with explicit σ-based tolerances.
+  - The time step must resolve the fastest precession (about 40 fs for the 40 nm cube at 30³ cells), so direct runs reach microseconds, not the ~1 s behind the 25 k_BT criterion. The design picks observables within reach.
+  - Results depend on cell size, and noise added to the 300 K parameters Ms(T), A(T), K(T) counts some fluctuations twice. The design states how this is handled.
