@@ -14,6 +14,7 @@
 #include "fields.hpp"
 #include "llg.hpp"
 #include "minimizer.hpp"
+#include "philox.hpp"
 #include "problem.hpp"
 
 namespace nb = nanobind;
@@ -90,6 +91,13 @@ static void on_device(Problem& p, In mag, Out out, F f) {
     p.backend().to_host(out.data(), H.data(), N);
 }
 
+static Method parse_method(const std::string& name) {
+    if (name == "rk45") return Method::rk45;
+    if (name == "heun") return Method::heun;
+    if (name == "rk23") return Method::rk23;
+    throw std::invalid_argument("method must be rk45, heun or rk23, not \"" + name + "\"");
+}
+
 NB_MODULE(_core, m) {
 #ifdef MICROMAG_CUDA
     m.attr("has_cuda") = true;
@@ -97,6 +105,11 @@ NB_MODULE(_core, m) {
     m.attr("has_cuda") = false;
 #endif
     m.attr("mu0") = mu0;
+    m.attr("kB") = kB;
+    m.def("philox", [](std::array<uint32_t, 4> c, std::array<uint32_t, 2> k) {
+        const Philox4 r = philox4x32({{c[0], c[1], c[2], c[3]}}, k[0], k[1]);
+        return std::array<uint32_t, 4>{r.v[0], r.v[1], r.v[2], r.v[3]};
+    }, "counter"_a, "key"_a, "Philox4x32-10 of one counter block (D41), for the known-answer test.");
     m.def("scale", &scale, "x"_a, "a"_a, "cuda"_a = false);
 
     nb::class_<Grid>(m, "Grid")
@@ -182,11 +195,24 @@ NB_MODULE(_core, m) {
            "Minimize the energy in place until max |m x H| / Ms < torque_tol; returns the iteration count.");
 
     nb::class_<LLG>(m, "LLG")
-        .def(nb::init<Problem&, double, double, double, double>(), "problem"_a, "alpha"_a, "gamma"_a = 1.76086e11,
-             "tol"_a = 1e-6, "max_step"_a = std::numeric_limits<double>::infinity(), nb::keep_alive<1, 2>())
+        .def("__init__", [](LLG* l, Problem& p, double alpha, double gamma, double tol, double max_step, const std::string& method,
+                            double temperature, double dt, uint32_t seed, uint32_t stage) {
+            new (l) LLG(p, alpha, gamma, tol, max_step, parse_method(method), temperature, dt, seed, stage);
+        }, "problem"_a, "alpha"_a, "gamma"_a = 1.76086e11, "tol"_a = 1e-6, "max_step"_a = std::numeric_limits<double>::infinity(),
+           "method"_a = "rk45", "temperature"_a = 0.0, "dt"_a = 0.0, "seed"_a = 0, "stage"_a = 0, nb::keep_alive<1, 2>(),
+           "method: rk45 (T = 0 only), heun (fixed step dt) or rk23 (D42). temperature in K; seed and stage key the noise (D41).")
         .def("run_until", [](LLG& l, Out mag, double t) {
             check_shape(mag, l.grid(), true, "m");
             l.run_until(mag.data(), t);
         }, "m"_a.noconvert(), "t"_a, "Advance m in place from llg.t to t (s).")
-        .def_ro("t", &LLG::t).def_ro("steps", &LLG::steps).def_ro("rejected", &LLG::rejected);
+        .def("thermal_field", [](LLG& l, uint64_t draw, Out out) {
+            check_shape(out, l.grid(), true, "out");
+            l.thermal_field(draw, out.data());
+        }, "draw"_a, "out"_a.noconvert(), "The thermal field (A/m) of one draw for a step of dt (D41).")
+        .def("wiener", [](const LLG& l, Out out) {
+            check_shape(out, l.grid(), true, "out");
+            l.wiener(out.data());
+        }, "out"_a.noconvert(), "Σ ΔW (s^½) over the accepted steps, per cell and component (D44).")
+        .def_ro("t", &LLG::t).def_ro("steps", &LLG::steps).def_ro("rejected", &LLG::rejected)
+        .def_ro("max_bridge_depth", &LLG::max_bridge_depth);
 }

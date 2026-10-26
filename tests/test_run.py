@@ -305,3 +305,42 @@ refine_to = 1e-4
     _, rows = macrostate(tmp_path / "run" / "stage1_hysteresis.csv")
     assert len(rows) < 60  # 16 coarse fields plus two bisections, not 7500 fine steps
     assert "Hc" in capsys.readouterr().out
+
+
+THERMAL_CARD = HEAD + """
+[initial]
+m = [0, 0, 1]
+
+[[stage]]
+type = "llg-dynamics"
+alpha = 0.5
+temperature = 300
+seed = 11
+dt = 1e-14
+duration = 2e-12
+sample_every = 1e-12
+
+[[stage]]
+type = "llg-dynamics"
+alpha = 0.5
+method = "rk23"
+temperature = 300
+seed = 11
+duration = 2e-12
+"""
+
+
+def test_thermal_stages_record_their_settings_and_reproduce(tmp_path):
+    finals = []
+    for name in ("a", "b"):
+        card = tmp_path / f"{name}.toml"
+        card.write_text(THERMAL_CARD)
+        run(card, tmp_path / name)
+        with h5py.File(tmp_path / name / "trajectory.h5") as f:
+            finals.append(f["final"]["m"][:])
+    assert np.abs(finals[0] - np.array([0, 0, 1.0])[:, None, None, None]).max() > 1e-3  # the noise moved m
+    assert np.array_equal(finals[0], finals[1])  # same card, same seed: the same run (D41)
+    s1, s2 = json.loads((tmp_path / "a" / "provenance.json").read_text())["stages"]
+    assert {k: s1[k] for k in ("temperature", "method", "dt", "seed")} == dict(temperature=300.0, method="heun", dt=1e-14, seed=11)
+    assert s1["steps"] == 200 and s1["rejected"] == 0 and s1["max_bridge_depth"] == 0
+    assert s2["method"] == "rk23" and s2["tol"] == 1e-6 and s2["steps"] > 0 and "max_bridge_depth" in s2

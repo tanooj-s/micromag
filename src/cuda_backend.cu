@@ -14,6 +14,7 @@
 
 #include "backend.hpp"
 #include "demag.hpp"
+#include "philox.hpp"
 
 namespace {
 
@@ -286,6 +287,22 @@ __global__ void bb_kernel(size_t N, const double* m, const double* m_prev, const
     yy[i] = y * y;
 }
 
+// D41: the same Philox stream as CpuBackend::normals.
+__global__ void normals_kernel(size_t n, uint32_t seed, uint32_t stage, uint64_t draw, double* out) {
+    const size_t i = thread_index();
+    if (i >= n) return;
+    double z[3];
+    normal3(seed, stage, draw, uint32_t(i), z);
+    for (size_t c = 0; c < 3; ++c) out[c * n + i] = z[c];
+}
+
+__global__ void add_thermal_kernel(size_t n, const double* Ms, double* out, const double* H, const double* dW, double c) {
+    const size_t i = thread_index();
+    if (i >= n) return;
+    const double s = Ms[i] != 0 ? sqrt(c / Ms[i]) : 0.0;
+    for (size_t j = 0; j < 3; ++j) out[j * n + i] = (H ? H[j * n + i] : 0.0) + s * dW[j * n + i];
+}
+
 class CudaBackend : public Backend {
 public:
     CudaBackend(const Grid& g, const double* Ms, const double* A, const double* K, const double* k, const uint8_t* region,
@@ -370,6 +387,16 @@ public:
         bb_kernel<<<blocks(3 * n_), block>>>(3 * n_, m, m_prev, d, d_prev, w1_.get(), w2_.get(), w3_.get());
         check_launch();
         return {sum(w1_.get(), 3 * n_), sum(w2_.get(), 3 * n_), sum(w3_.get(), 3 * n_)};
+    }
+
+    void normals(uint32_t seed, uint32_t stage, uint64_t draw, double* out) override {
+        normals_kernel<<<blocks(n_), block>>>(n_, seed, stage, draw, out);
+        check_launch();
+    }
+
+    void add_thermal(double* out, const double* H, const double* dW, double c) override {
+        add_thermal_kernel<<<blocks(n_), block>>>(n_, Ms_.get(), out, H, dW, c);
+        check_launch();
     }
 
 private:

@@ -39,6 +39,10 @@ public:
     virtual std::array<double, 2> descent(const double* m, const double* H, double* d) = 0;
     // Barzilai–Borwein sums with s = m - m_prev and y = d_prev - d: {s·s, s·y, y·y}.
     virtual std::array<double, 3> bb_dots(const double* m, const double* m_prev, const double* d, const double* d_prev) = 0;
+    // D41: unit normals (3, n) for one draw: Philox key (seed, stage), counter (cell, block, draw).
+    virtual void normals(uint32_t seed, uint32_t stage, uint64_t draw, double* out) = 0;
+    // D41: out = H + sqrt(c / Ms) dW per cell, and out = H in vacuum. H == nullptr means 0. out may alias H.
+    virtual void add_thermal(double* out, const double* H, const double* dW, double c) = 0;
 };
 
 // Owning array in a backend's memory space.

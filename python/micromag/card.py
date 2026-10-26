@@ -26,6 +26,10 @@ class LLGDynamics:
     check_every: float | None
     max_duration: float | None
     dump_every: float | None
+    temperature: float  # K (D41)
+    method: str         # rk45, heun or rk23 (D42)
+    dt: float | None    # s, heun only
+    seed: int | None    # required at T > 0
     type: str = "llg-dynamics"
 
 
@@ -184,6 +188,7 @@ def _table(raw, spec, where, errors):
 
 
 ZERO = np.zeros(3)
+METHODS = ("rk45", "heun", "rk23")
 STAGES = {
     "llg-dynamics": {
         "type": (_string, REQUIRED),
@@ -198,6 +203,10 @@ STAGES = {
         "check_every": (_positive, None),
         "max_duration": (_positive, None),
         "dump_every": (_positive, None),
+        "temperature": (_nonnegative, 0.0),
+        "method": (lambda v: (v, None) if v in METHODS else (None, "rk45, heun or rk23"), None),  # None: by temperature
+        "dt": (_positive, None),
+        "seed": (lambda v: (v, None) if _seed(v)[1] is None and v < 2**32 else (None, "a whole number from 0 to 2³² − 1"), None),
     },
     "minimize": {
         "type": (_string, REQUIRED),
@@ -259,6 +268,21 @@ def _stage(raw, where, errors):
         if v["tol"] > v["until_torque"] / 100:  # D20: each step re-excites a torque of a few × tol
             errors.append(f"{where}: 'tol' ({v['tol']:g}) must be ≤ until_torque / 100 ({v['until_torque'] / 100:g}), "
                           "or the torque never falls below until_torque (D20)")
+    hot = v["temperature"] > 0
+    if v["method"] is None:  # D43: existing cards keep rk45; heun is the default at T > 0
+        v["method"] = "heun" if hot else "rk45"
+    if hot and v["method"] == "rk45":
+        errors.append(f"{where}: rk45 can't take noise; use method = \"heun\" or \"rk23\" at temperature > 0 (D42)")
+    if v["method"] == "heun" and v["dt"] is None:
+        errors.append(f"{where}: heun needs 'dt', its fixed step (s)")
+    if v["method"] != "heun" and v["dt"] is not None:
+        errors.append(f"{where}: 'dt' goes with heun; {v['method']} chooses its own steps from 'tol'")
+    if hot and v["seed"] is None:
+        errors.append(f"{where}: temperature > 0 needs 'seed' (D41)")
+    if hot and torque:
+        errors.append(f"{where}: 'until_torque' needs temperature = 0: the torque never settles under noise (D43)")
+    if len(errors) > before:
+        return None
     v.pop("type")
     return LLGDynamics(**v)
 

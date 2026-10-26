@@ -1,8 +1,8 @@
 import numpy as np
 
-from ._core import LLG, Demag, Grid, Minimizer, Problem, anisotropy_field, demag_tensor, exchange_field, has_cuda, mu0, scale, zeeman_field
+from ._core import LLG, Demag, Grid, Minimizer, Problem, anisotropy_field, demag_tensor, exchange_field, has_cuda, kB, mu0, philox, scale, zeeman_field
 
-__all__ = ["LLG", "Demag", "Grid", "Minimizer", "Problem", "anisotropy_field", "demag_tensor", "energy", "exchange_field", "has_cuda", "hysteresis", "mu0", "run", "scale", "zeeman_field"]
+__all__ = ["LLG", "Demag", "Grid", "Minimizer", "Problem", "anisotropy_field", "demag_tensor", "energy", "exchange_field", "has_cuda", "hysteresis", "kB", "mu0", "philox", "run", "scale", "zeeman_field"]
 
 
 def energy(grid, m, Ms, H, c):

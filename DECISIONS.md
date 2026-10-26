@@ -663,6 +663,7 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
   - Speed: the noise is one elementwise kernel per draw, small next to the two demag FFT evaluations of a Heun step (to be measured, D44).
   - Results depend on cell size: smaller cells carry shorter-wavelength fluctuations. Recorded in NOTES.md as an open research question (user, 2026-10-25), to be addressed during the code's development.
   - The 300 K parameters Ms(T), A(T), K(T) already contain the mean effect of atomic-scale fluctuations, and the noise adds them again: some fluctuations count twice. This is a warning to users in `docs/thermal.md` and `docs/cards.md` (user, 2026-10-25), not corrected in the code.
+- **Result (2026-10-26, laptop CPU):** at 64×64×16 cells with demag, the noise adds about 12% to a Heun step (51 → 58 ms) and 8% to an RK23 step (78 → 84 ms): two Philox blocks and a Box–Muller per cell, single-threaded. Smaller than the field evaluations, but not negligible on the CPU; the GPU figure is the next Result.
 
 ### D42: Stochastic integrators: Heun and adaptive RK23 with a Brownian bridge (refines D18) (2026-10-26)
 - **Context:** the adaptive RK45 (D18) can't take noise: its error estimate assumes a smooth right-hand side. The noise is multiplicative (it enters as m × H_th), so the scheme also decides the calculus. Brown's physics is the Stratonovich reading.
@@ -681,6 +682,8 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
   - `rk45` with T > 0 is refused.
   - A Heun step costs 2 field evaluations, an `rk23` step 3 (with FSAL), an `rk45` step 6.
   - On the GPU, a floating-point difference in `err` can flip an `rk23` accept/reject decision and so change the draw sequence: CPU = CUDA for `rk23` holds only for trajectories short enough to avoid a near-tie (D44).
+- **Correction (2026-10-26):** the backend gained two functions, not one: `normals(seed, stage, draw, out)` fills unit Gaussians, and `add_thermal(out, H, dW, c)` adds √(c / Ms) dW per cell. Heun, RK23 and the bridge all work on increments ΔW, so the noise had to be separable from its scaling.
+- **Correction (2026-10-26):** slivers. A step that ends within max(10⁻⁹ h, 10⁻¹² t) of `t_end`, or of the end of a bridge entry, takes the whole interval. Without this, rounding left remainders of ~10⁻²⁴ s on the bridge stack, which later failed with `t + h == t` (seen on a lone macrospin at tol = 10⁻⁴), and Heun took 202 steps instead of 200 between samples.
 
 ### D43: Thermal card keys, outputs and docs (refines D27, D28) (2026-10-26)
 - **Context:** cards must express thermal runs (D27), and the results folder must record how a run was made (D28).
@@ -708,3 +711,21 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
   - (a)–(c), the order tests and the bridge run for `heun` and `rk23` in the default suite; (d) for both under `-m slow`. The existing suite runs unchanged.
 - **Alternatives:** 3σ (a fresh seed fails about 0.3% of the time per check); Brown's high-barrier asymptote for (d) (wrong by ~1/σ at barriers we can reach); all statistical tests slow (keeps the default run shorter, but hides the main checks).
 - **Consequence:** the default CPU run grows by about 1–2 minutes (estimate, to be measured).
+- **Correction (2026-10-26):** the bridge check as first written, Var(Σ ΔW) on a 16³ ensemble, can't see a redraw on rejection. A step is rejected when its worst cell is, so on a large grid a rejection says little about any one cell's noise. Measured on 32³ cells over 2 τ_N: Var(Σ ΔW)/t = 0.9987 with the bridge and 0.9985 with the redraw, ± 0.0045. On a lone macrospin, which rejects about 40% of its steps, the redraw is drastic. The checks now use one cell:
+  - **Wiener increments:** ΔW over 10,000 intervals of τ_N/200 must be N(0, Δ). The bridge gives 1.006 ± 0.013 for the variance; the redraw gives 0.58.
+  - **Single-macrospin Boltzmann (new):** ⟨cos²θ⟩ over 10⁵ τ_N at KV/kT = 2, σ from 100 blocks. The bridge gives 0.5329 ± 0.0011 against the exact 0.5313; the redraw gives 0.381.
+  The bridge matters for few-cell systems and makes no measurable difference on large grids.
+- **Result (2026-10-26, laptop CPU):**
+  - Philox matches the three Random123 known-answer vectors. The noise's mean, variance (per material), fourth moment and the cell, component and draw correlations are all within 4σ; vacuum cells get exactly 0.
+  - Order at T = 0: both methods fall inside their bands (Heun 3.4–4.6, RK23 6.8–9.2).
+  - Boltzmann ensemble (16³ cells, KV/kT = 2, 100 samples τ_N/2 apart after 5 τ_N): every bin within 4σ for both methods; Langevin at ξ = 2 within 4σ; α = 0.1 and α = 1 agree within 4σ.
+  - dt and tol: Heun at τ_N/200 and RK23 at tol = 10⁻³. Halving each (τ_N/400, 5·10⁻⁴) gives the same z-scores within noise (largest bin |z| 2.6 → 2.5 and 2.1 → 2.2). The bias shows only at τ_N/50 (largest bin |z| 4.2, Langevin z 2.4).
+  - Escape rate at KV/kT = 3 (32³ cells, 8 groups, fit over 1–8.5 τ_N): Heun 0.2406 ± 0.0025 /τ_N, RK23 0.2357 ± 0.0034 /τ_N, against the Fokker–Planck 0.2357 /τ_N. Heun at τ_N/100, /400 and /800 gives 0.2340, 0.2311 and 0.2341, so the +2σ at /200 is noise, not a dt trend. The oracle gives exactly 1 at KV/kT = 0 and Brown's asymptote within 2/σ at σ = 20.
+  - Suites: `uv run pytest` gives 130 passed, 48 skipped (CUDA), 24 deselected in 74 s; `-m ""` gives 140 passed, 62 skipped in 16.5 min. SP4 (138.6 ps, RMS 0.0051), SP2, SP3, the cubes and the grain ensemble are unchanged.
+  - CUDA compiles (Docker, CUDA 12.1). The GPU run is the next Result.
+- **Mutation check (2026-10-26):** each bug was planted alone in the C++.
+  - Philox with 9 rounds instead of 10: caught by the known-answer test.
+  - α missing from σ²: caught by the variance test and by both α-independence tests. At α = 1 the Boltzmann tests can't see it, which is why (c) exists.
+  - Heun drawing a fresh kick for the corrector: caught by the Heun Boltzmann and Langevin tests.
+  - RK23 redrawing its noise on rejection: caught by the single-macrospin Boltzmann test and the Wiener-increment test (not by the ensemble tests; see the Correction).
+  - Known gap: the bridge's conditional mean with √(h′/h) instead of h′/h. No test catches it. The two pieces still add up to the original increment, so only the noise inside a rejected interval is wrong, and the single-macrospin ⟨cos²θ⟩ moves from 0.5329 to 0.5339 (within its σ of 0.0011). Catching it would need a test hook exposing the split itself.

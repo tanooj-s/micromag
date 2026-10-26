@@ -40,7 +40,8 @@ results folder: card.toml, provenance.json, stage<k>_<type>.csv, trajectory.h5  
 | `src/backend.hpp` | the `Backend` interface and the `Buffer` owning array |
 | `src/problem.{hpp,cpp}` | the CPU backend; `Problem` sums H_eff and computes the energies |
 | `src/cuda_backend.cu` | the CUDA backend (built with `MICROMAG_CUDA=ON`) |
-| `src/llg.{hpp,cpp}`, `src/minimizer.{hpp,cpp}` | the drivers |
+| `src/llg.{hpp,cpp}`, `src/minimizer.{hpp,cpp}` | the drivers: LLG by RK45, or with the thermal field by Heun or RK23 with a Brownian bridge (D42) |
+| `src/philox.hpp` | the Philox random numbers, shared by both backends (D41) |
 | `src/bindings.cpp` | the nanobind module `micromag._core` |
 | `python/micromag/__init__.py` | the public Python API, plus `energy()` and the in-memory `hysteresis()` |
 | `python/micromag/card.py` | the card schema and its validation |
@@ -71,6 +72,9 @@ print(prob.energies(m))                                       # {"exchange": …
 
 llg = mm.LLG(prob, alpha=0.02)
 llg.run_until(m, 1e-9)                                        # advance to t = 1 ns
+
+hot = mm.LLG(prob, alpha=0.1, method="heun", dt=1e-14, temperature=300, seed=1)   # D41, D42
+hot.run_until(m, 2e-9)
 ```
 
 `mm.run(card, out, device=None)` is the same as `micromag run`.

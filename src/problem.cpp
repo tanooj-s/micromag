@@ -5,6 +5,7 @@
 #include <stdexcept>
 
 #include "demag.hpp"
+#include "philox.hpp"
 
 namespace {
 
@@ -107,6 +108,23 @@ public:
             yy += y * y;
         }
         return {ss, sy, yy};
+    }
+
+    void normals(uint32_t seed, uint32_t stage, uint64_t draw, double* out) override {
+        const size_t n = g_.n();
+        for (size_t i = 0; i < n; ++i) {
+            double z[3];
+            normal3(seed, stage, draw, uint32_t(i), z);
+            for (size_t c = 0; c < 3; ++c) out[c * n + i] = z[c];
+        }
+    }
+
+    void add_thermal(double* out, const double* H, const double* dW, double c) override {
+        const size_t n = g_.n();
+        for (size_t i = 0; i < n; ++i) {
+            const double s = Ms_[i] != 0 ? std::sqrt(c / Ms_[i]) : 0.0;
+            for (size_t j = 0; j < 3; ++j) out[j * n + i] = (H ? H[j * n + i] : 0.0) + s * dW[j * n + i];
+        }
     }
 
 private:

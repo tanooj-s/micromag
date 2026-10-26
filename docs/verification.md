@@ -5,7 +5,7 @@ Every numerical routine is tested against an analytic result or an independent o
 ## Running the tests
 
 ```console
-$ uv run pytest                 # fast suite, about 10 s; CUDA cases skip on a CPU-only build
+$ uv run pytest                 # fast suite, about 1.5 min; CUDA cases skip on a CPU-only build
 $ uv run pytest -m slow -s      # physics benchmarks, about 15 min on a laptop CPU; -s prints the comparisons
 $ uv run pytest -m ""           # everything
 ```
@@ -22,6 +22,7 @@ Physics tests take a `device` fixture, so each one runs on `cpu` and, on a CUDA 
 | `test_card.py`, `test_run.py` | card validation, the results folder, restarts, failure handling, refined hysteresis |
 | `test_coercivity.py` | µMAG SP2 and the Nd₂Fe₁₄B cubes |
 | `test_regions.py` | shapes, Voronoi grains, the boundary phase, the coupling table, the Stoner–Wohlfarth ensemble |
+| `test_thermal.py` | Philox against its known-answer vectors; the thermal field's variance and independence; Heun and RK23 orders at T = 0; uncoupled macrospins against the Boltzmann distribution and the Langevin curve, at two damping values; a single macrospin under heavy step rejection and the Brownian bridge; the escape rate against the Fokker–Planck operator (slow); CPU = CUDA |
 
 ## Validation against published results
 

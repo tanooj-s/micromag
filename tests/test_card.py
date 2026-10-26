@@ -220,3 +220,43 @@ mu0_H_step = 0.1
     (s,) = card(tmp_path, ramp + "refine_to = 1e-4\nrefine_jump = 0.05\n").stages
     assert s.refine_to == 1e-4 and s.refine_jump == 0.05
     assert "refine_to" in errors(tmp_path, ramp + "refine_to = 0.2\n")  # coarser than the step itself
+
+
+THERMAL = LLG + "temperature = 300\nseed = 4\ndt = 1e-14\n"
+
+
+def test_thermal_keys_and_their_defaults(tmp_path):
+    (s,) = card(tmp_path, LLG).stages
+    assert s.temperature == 0.0 and s.method == "rk45" and s.dt is None and s.seed is None  # existing cards unchanged (D43)
+    (s,) = card(tmp_path, THERMAL).stages
+    assert s.temperature == 300.0 and s.method == "heun" and s.dt == 1e-14 and s.seed == 4  # heun by default at T > 0
+    (s,) = card(tmp_path, LLG + 'temperature = 300\nseed = 4\nmethod = "rk23"\n').stages
+    assert s.method == "rk23" and s.dt is None
+
+
+@pytest.mark.parametrize("extra, what", [
+    ('temperature = 300\nseed = 4\nmethod = "rk45"\n', "rk45 can't take noise"),
+    ("temperature = 300\nseed = 4\n", "heun needs 'dt'"),
+    ("temperature = 300\ndt = 1e-14\n", "temperature > 0 needs 'seed'"),
+    ('method = "rk23"\ndt = 1e-14\n', "'dt' goes with heun"),
+    ('method = "euler"\n', "'method' must be"),
+    ("temperature = -1\n", "'temperature' must be"),
+    ("temperature = 300\nseed = 4294967296\ndt = 1e-14\n", "'seed' must be"),
+])
+def test_thermal_errors_name_the_problem(tmp_path, extra, what):
+    assert what in errors(tmp_path, LLG + extra)
+
+
+def test_until_torque_is_refused_at_temperature(tmp_path):
+    stage = """
+[[stage]]
+type = "llg-dynamics"
+alpha = 0.5
+method = "rk23"
+temperature = 300
+seed = 1
+until_torque = 1e-3
+check_every = 1e-12
+max_duration = 1e-9
+"""
+    assert "'until_torque' needs temperature = 0" in errors(tmp_path, stage)

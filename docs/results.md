@@ -70,7 +70,7 @@ state = "stage1"                    # or "final" (the default)
 | `git` | `{hash, dirty}` of the checkout, or `null` outside one |
 | `initial` | the uniform `m`, or the restart file, state and SHA-256 |
 | `regions` | per `[[region]]`: `id`, `material`, `shape`, exact `volume_m3` (null for `all` and inverted shapes) and painted `cells_m3` |
-| `stages` | per stage: `type`, `wall_s`, and for `hysteresis` a `summary` with `Hc_T`, `switch_T` and `remanence` |
+| `stages` | per stage: `type`, `wall_s`; for `hysteresis` a `summary` with `Hc_T`, `switch_T` and `remanence`; for `llg-dynamics` `temperature`, `method`, `dt` (heun) or `tol`, `seed`, `steps`, `rejected` and `max_bridge_depth` (D43) |
 
 The file is rewritten after each stage, so a killed run still shows how far it got.
 

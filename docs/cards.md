@@ -195,20 +195,44 @@ The stage reports `Hc_T` (the first zero of m·ĥ, linearly interpolated), `swit
 
 ### `type = "llg-dynamics"`
 
-Time integration of the Landau–Lifshitz–Gilbert equation with an adaptive Dormand–Prince RK45.
+Time integration of the Landau–Lifshitz–Gilbert equation: by default an adaptive Dormand–Prince RK45, and at T > 0 with Brown's thermal field (see [Thermal runs](#thermal-runs)).
 
 | Key | Default | Meaning |
 |---|---|---|
 | `alpha` | required | Gilbert damping (dimensionless) |
 | `gamma` | `1.76086e11` | gyromagnetic ratio (rad/(T·s)) |
 | `mu0_H` | `[0, 0, 0]` | applied field (T) |
-| `tol` | `1e-6` | per-step error tolerance |
-| `max_step` | none | largest step (s) |
+| `method` | `"rk45"` at T = 0, `"heun"` at T > 0 | `"rk45"` (T = 0 only), `"heun"` (fixed step) or `"rk23"` (adaptive) |
+| `tol` | `1e-6` | per-step error tolerance (`rk45`, `rk23`) |
+| `max_step` | none | largest step (s) (`rk45`, `rk23`) |
+| `dt` | required for `heun` | the fixed step (s); only with `heun` |
+| `temperature` | `0` | temperature (K) |
+| `seed` | required at T > 0 | the noise seed, a whole number from 0 to 2³² − 1 |
 | `dump_every` | none | snapshot interval (s) |
 
 Give exactly one stopping rule:
 - `duration` (s), with an optional `sample_every` (s): rows at the start, at every interval and at the end.
 - `until_torque`, `check_every` and `max_duration`, all required: stop when max \|m × H\| / Ms falls below `until_torque`, checked every `check_every`; the stage fails at `max_duration`. `tol` must be ≤ `until_torque / 100`, or the threshold is never reached.
+
+#### Thermal runs
+
+With `temperature > 0`, a Gaussian random field with Brown's variance, 2 α k_B T / (µ0² |γ| Ms V Δt), is added in every magnetic cell (D41). The physics, the two integrators and the caveats are explained in [thermal.md](thermal.md).
+
+```toml
+[[stage]]
+type = "llg-dynamics"
+alpha = 0.1
+temperature = 300     # K
+seed = 1              # same card and seed: the same run, on the CPU or the GPU
+dt = 1e-14            # s, the fixed heun step: resolve the fastest precession, then check by halving it
+duration = 1e-9
+sample_every = 1e-12
+```
+
+- `rk45` can't take noise, `dt` goes only with `heun`, and `until_torque` is refused at T > 0 (the torque never settles under noise).
+- Each stage keys its noise by `seed` and its position in the card, so two stages with the same seed draw different numbers.
+- ⟨m⟩ and the energies in the CSV become noisy time series. The temperature, method, step settings, seed and step counts are in `provenance.json`.
+- **Two caveats.** Material parameters measured at temperature already contain part of the fluctuations, which the noise then counts again; and results depend on the cell size. Neither is corrected; see [thermal.md](thermal.md#caveats). The temperature is one value per stage, not per cell.
 
 ## Examples
 

@@ -211,7 +211,7 @@ def run(card, out, device=None):
             macro = Macrostate(out / f"stage{k}_{stage.type}.csv", COLUMNS[stage.type])
             group = micro.stage(k, stage.type)
             try:
-                summary, extra = _run_stage(stage, prob, m, magnetic, measure, macro, micro, group)
+                summary, extra = _run_stage(stage, k, prob, m, magnetic, measure, macro, micro, group)
             except Exception as e:
                 micro.single("failed", m)
                 prov.update(status="failed", error=f"stage {k} ({stage.type}): {e}", finished=_now())
@@ -232,7 +232,7 @@ def run(card, out, device=None):
     return out
 
 
-def _run_stage(stage, prob, m, magnetic, measure, macro, micro, group):
+def _run_stage(stage, k, prob, m, magnetic, measure, macro, micro, group):
     """Runs one stage on m in place, writing its rows and snapshots. Returns the progress-line summary."""
     if isinstance(stage, Hysteresis):
         return _hysteresis(stage, prob, m, magnetic, measure, macro, micro, group)
@@ -246,7 +246,8 @@ def _run_stage(stage, prob, m, magnetic, measure, macro, micro, group):
         return f"{it} iterations at {field}", {}
 
     assert isinstance(stage, LLGDynamics)
-    llg = LLG(prob, stage.alpha, gamma=stage.gamma, tol=stage.tol, max_step=stage.max_step)
+    llg = LLG(prob, stage.alpha, gamma=stage.gamma, tol=stage.tol, max_step=stage.max_step, method=stage.method,
+              temperature=stage.temperature, dt=stage.dt or 0.0, seed=stage.seed or 0, stage=k)
     timed = stage.duration is not None
     end = stage.duration if timed else stage.max_duration
     H = np.empty_like(m)
@@ -267,7 +268,10 @@ def _run_stage(stage, prob, m, magnetic, measure, macro, micro, group):
             micro.append(group, m, t)
         if done:
             break
-    return f"{llg.t * 1e9:.3f} ns, {llg.steps} steps, {llg.rejected} rejected, at {field}", {}
+    step = {"dt": stage.dt} if stage.method == "heun" else {"tol": stage.tol}
+    return (f"{llg.t * 1e9:.3f} ns, {llg.steps} steps, {llg.rejected} rejected, at {field}",
+            {"temperature": stage.temperature, "method": stage.method, **step, "seed": stage.seed, "steps": llg.steps,
+             "rejected": llg.rejected, "max_bridge_depth": llg.max_bridge_depth})  # D43
 
 
 def _hysteresis(stage, prob, m, magnetic, measure, macro, micro, group):
