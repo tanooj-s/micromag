@@ -645,3 +645,66 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
   - Statistical tests (the Boltzmann distribution, Brown's macrospin escape time) with explicit σ-based tolerances.
   - The time step must resolve the fastest precession (about 40 fs for the 40 nm cube at 30³ cells), so direct runs reach microseconds, not the ~1 s behind the 25 k_BT criterion. The design picks observables within reach.
   - Results depend on cell size, and noise added to the 300 K parameters Ms(T), A(T), K(T) counts some fluctuations twice. The design states how this is handled.
+
+### D41: The thermal field model (2026-10-26)
+- **Context:** iteration 7 (D40) adds thermal fluctuations at the continuum scale of the dynamics. The noise strength, where it lives and the random numbers have to be fixed before the integrator.
+- **Decision:**
+  - Brown's (1963) thermal field: Gaussian white noise added to H_eff in eq. 25, independent per cell and per component, with σ² = 2 α k_B T / (µ0 γ0 Ms V Δt) per step, γ0 = µ0 |γ|, V the cell volume. No 1+α² factor: the noise enters H in the Gilbert form, and our LL form (D18) carries it into both terms (MuMax3's convention).
+  - Zero noise in vacuum cells (Ms = 0). σ is per cell, since Ms is (D33).
+  - T is one scalar per `llg-dynamics` stage, in K.
+  - Random numbers: a self-written Philox4x32-10 (Salmon et al. 2011) in one header shared by the CPU and CUDA backends. Key: (seed, stage index). Counter: (draw number, cell). Gaussians by Box–Muller. The integers are bitwise equal on both devices; the Gaussians agree to about 1 ulp (CUDA's log and cos against libm).
+- **Alternatives:**
+  - cuRAND: the same speed (the same Philox), but a CPU-only build can't reproduce it, so the CPU stops being the oracle for the noise.
+  - A different generator per device: CPU and GPU could then only be compared statistically.
+  - Per-cell temperature: for hot spots or gradients, which nothing on the roadmap needs.
+  - The 1+α² variant of the variance: the equilibrium temperature comes out wrong by that factor (2× at α = 1).
+  - A cell-size renormalisation of the parameters (e.g. Grinstein–Koch): research-level, with no settled method.
+- **Consequence:**
+  - Speed: the noise is one elementwise kernel per draw, small next to the two demag FFT evaluations of a Heun step (to be measured, D44).
+  - Results depend on cell size: smaller cells carry shorter-wavelength fluctuations. Recorded in NOTES.md as an open research question (user, 2026-10-25), to be addressed during the code's development.
+  - The 300 K parameters Ms(T), A(T), K(T) already contain the mean effect of atomic-scale fluctuations, and the noise adds them again: some fluctuations count twice. This is a warning to users in `docs/thermal.md` and `docs/cards.md` (user, 2026-10-25), not corrected in the code.
+
+### D42: Stochastic integrators: Heun and adaptive RK23 with a Brownian bridge (refines D18) (2026-10-26)
+- **Context:** the adaptive RK45 (D18) can't take noise: its error estimate assumes a smooth right-hand side. The noise is multiplicative (it enters as m × H_th), so the scheme also decides the calculus. Brown's physics is the Stratonovich reading.
+- **Decision:**
+  - One `LLG` class with a `method`: `rk45` (D18, unchanged, T = 0 only), `heun` (the default at T > 0) and `rk23`. Every method also runs at T = 0. The methods share the field evaluation, the noise buffer and the driver loop. One new backend function, `thermal_field`, fills H_th per cell; it is added to H through `lincomb`.
+  - `heun`: fixed step dt. One noise sample per step, held over the predictor and the corrector; m renormalised after the step. Converges to the Stratonovich solution (weak order 1; 2nd order at T = 0).
+  - `rk23`: adaptive Bogacki–Shampine 3(2), the noise frozen over each step as the field √(2D) ΔW / h, D = α k_B T / (µ0 γ0 Ms V). The D18 error norm (largest per-cell error vector), `h_new = h·0.9·(tol/err)^(1/3)` clamped to 0.2–5×.
+  - Rejected `rk23` steps keep their noise through a Brownian bridge (rejection sampling with memory, Rackauckas & Nie 2017). Retrying h → h′ < h splits ΔW exactly: ΔW′ = (h′/h) ΔW + √(h′(h − h′)/h) η, and the remainder (ΔW − ΔW′ over h − h′) goes on a stack. Later steps use the stack before any fresh draw: a step never spans more than the top entry, and one shorter than it splits that entry by the same bridge. The stack is a `std::vector<Buffer>` with no cap; its deepest level is exposed with `steps` and `rejected`. Philox's counter is the draw number, so a bridge draw is just another draw.
+- **Alternatives:**
+  - Euler–Maruyama with the Itô drift: dropped (user, 2026-10-26). The Itô correction ½ Σ_jk G_kj ∂_k G_ij for G(m)ξ = −γ′σ√Δt [m × ξ + α m × (m × ξ)] is −γ′² σ² Δt (1+α²) m: it points purely along m and only stops |m| from growing (checked numerically: the tangential part is ~10⁻¹¹ of the radial part at α = 0, 0.3 and 1). The renormalisation after each step supplies it to first order, so the explicit term is redundant and untestable, and projected Euler offers nothing Heun doesn't.
+  - Reusing a rejected step's noise rescaled to the shorter step (Leliaert et al. 2017, MuMax3): simpler, but approximate; the user chose the exact bridge (2026-10-25).
+  - A step that spans several stack entries (RSwM3): fewer steps, more bookkeeping.
+  - An integrator class per method behind an interface: a layer nothing else plugs into.
+  - Implicit midpoint: preserves |m|, but a nonlinear solve per step.
+- **Consequence:**
+  - `rk45` with T > 0 is refused.
+  - A Heun step costs 2 field evaluations, an `rk23` step 3 (with FSAL), an `rk45` step 6.
+  - On the GPU, a floating-point difference in `err` can flip an `rk23` accept/reject decision and so change the draw sequence: CPU = CUDA for `rk23` holds only for trajectories short enough to avoid a near-tie (D44).
+
+### D43: Thermal card keys, outputs and docs (refines D27, D28) (2026-10-26)
+- **Context:** cards must express thermal runs (D27), and the results folder must record how a run was made (D28).
+- **Decision:**
+  - New keys on `llg-dynamics`: `temperature` (K, default 0); `method` (`rk45` at T = 0, `heun` at T > 0, when not given); `dt` (required for `heun`); `seed` (required at T > 0). `tol` and `max_step` apply to `rk45` and `rk23`.
+  - Card errors: `rk45` with T > 0; `heun` without `dt`; `dt` with an adaptive method; T > 0 without `seed`; `until_torque` with T > 0 (the torque never settles under noise).
+  - dt is never chosen automatically. `docs/cards.md` gives a rule of thumb (a small fraction of the precession period at the largest field, and below the exchange stability limit).
+  - Thermal settings exist only on `llg-dynamics`; `minimize` and `hysteresis` stay at T = 0.
+  - Provenance records, per stage: temperature, method, dt or tol, seed, steps, rejected and the deepest bridge stack. No new thermo CSV column: T is constant in a stage, and ⟨m⟩ and the energies become noisy time series at T > 0.
+  - Docs: a "Thermal runs" section in `docs/cards.md` (keys, the dt rule of thumb, the caveats in short), and a new `docs/thermal.md` with the physics in plain terms and the caveats in full (cell size, double counting, no per-cell T); `docs/verification.md` and `docs/architecture.md` updated; a README pointer.
+- **Alternatives:** an automatic dt (hides a key numerical choice, and the largest field changes during reversal); an optional seed with a default; a temperature column in the CSV (repeats a constant).
+- **Consequence:** every existing card runs unchanged (T = 0, `rk45`); SP4 must still give 138.6 ps.
+
+### D44: Iteration-7 checks (2026-10-26)
+- **Context:** a thermal code can be wrong without looking wrong: it runs and the needles wiggle, at the wrong temperature or the wrong speed. Random runs never land exactly on a formula, so the checks compare averages against their error bars.
+- **Decision:**
+  - **Statistics:** every statistical test runs with a fixed seed, so it is deterministic. Its tolerance is 4σ (a fresh seed fails about 1 in 16,000), with σ from block averages over correlated samples. dt is small enough that the integrator's bias is ≤ 1σ, checked by halving dt once.
+  - **(a) Noise:** Philox against the Random123 known-answer vectors; the field has mean 0, variance σ² (D41) and no correlation between cells, components or draws; zero in vacuum.
+  - **Order (T = 0):** against the D20 analytic macrospin with fixed steps, the error ratio per halving of h is 3.4–4.6 for `heun` (2nd order) and 6.8–9.2 for `rk23` (3rd).
+  - **(b) Boltzmann ensemble:** A = 0 and demag off (D36) make every cell an independent uniaxial macrospin, so one grid is an ensemble. The cos θ histogram matches P ∝ exp(−KV sin²θ / k_BT) bin by bin, and at K = 0 in a field, ⟨m·ĥ⟩ matches the Langevin function coth ξ − 1/ξ, ξ = µ0 Ms V H / k_BT.
+  - **(c) α-independence:** the (b) averages at α = 0.1 and α = 1 agree within 4σ combined.
+  - **Bridge:** with a tiny tol forcing many rejections, Var(Σ ΔW) over [0, t] is exactly t per component; a fresh redraw on rejection fails this.
+  - **(d) Escape time (slow):** the relaxation rate of ⟨m_z⟩ of the ensemble started at +z, at KV/k_BT ≈ 3–6, against the smallest nonzero eigenvalue of the Fokker–Planck operator in a Legendre basis (exact at any barrier height).
+  - **CPU = CUDA:** the noise field to 1e-14 relative; a 100-step `heun` trajectory to 1e-10; `rk23` over a run short enough to avoid an accept/reject near-tie (D42).
+  - (a)–(c), the order tests and the bridge run for `heun` and `rk23` in the default suite; (d) for both under `-m slow`. The existing suite runs unchanged.
+- **Alternatives:** 3σ (a fresh seed fails about 0.3% of the time per check); Brown's high-barrier asymptote for (d) (wrong by ~1/σ at barriers we can reach); all statistical tests slow (keeps the default run shorter, but hides the main checks).
+- **Consequence:** the default CPU run grows by about 1–2 minutes (estimate, to be measured).
