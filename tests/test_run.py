@@ -3,6 +3,7 @@ import hashlib
 import json
 import shutil
 import subprocess
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import h5py
@@ -77,7 +78,7 @@ def test_results_folder_layout_and_provenance(done):
     card, out = done
     prov = json.loads((out / "provenance.json").read_text())
     dirty = prov["git"] is not None and prov["git"]["dirty"]
-    expected = ["card.toml", "provenance.json", "trajectory.h5",
+    expected = ["card.toml", "provenance.json", "trajectory.h5", "trajectory.xdmf",
                 "stage1_llg-dynamics.csv", "stage2_minimize.csv", "stage3_hysteresis.csv"] + (["git.diff"] if dirty else [])
     assert sorted(p.name for p in out.iterdir()) == sorted(expected)
     assert (out / "card.toml").read_bytes() == card.read_bytes()
@@ -123,6 +124,72 @@ def test_trajectory_dump(done):
         final = f["final"]["m"][:]
         assert np.array_equal(final, s3["m"][-1])
         assert np.allclose(final.reshape(3, -1).mean(axis=1), hy[-1, 3:6], rtol=0, atol=1e-15)
+
+
+def _eval_xdmf(out):
+    """Parses out/trajectory.xdmf and resolves its HyperSlab + JOIN($0, $1, $2) references against trajectory.h5."""
+    root = ET.parse(out / "trajectory.xdmf").getroot()
+    assert root.tag == "Xdmf"
+    coll = root.find("./Domain/Grid")
+    assert coll is not None and coll.attrib["GridType"] == "Collection" and coll.attrib["CollectionType"] == "Temporal"
+    frames = []
+    with h5py.File(out / "trajectory.h5") as f:
+        for grid in coll.findall("Grid"):
+            t = float(grid.find("Time").attrib["Value"])
+            topo = [int(x) for x in grid.find("Topology").attrib["Dimensions"].split()]
+            assert grid.find("Topology").attrib["TopologyType"] == "3DCoRectMesh"
+            geom = grid.find("Geometry")
+            assert geom.attrib["GeometryType"] == "ORIGIN_DXDYDZ"
+            origin, spacing = [[float(x) for x in d.text.split()] for d in geom.findall("DataItem")]
+
+            m_attr = grid.find("./Attribute[@Name='m']")
+            assert m_attr.attrib["AttributeType"] == "Vector" and m_attr.attrib["Center"] == "Cell"
+            join = m_attr.find("DataItem")
+            assert join.attrib["ItemType"] == "Function" and join.attrib["Function"] == "JOIN($0, $1, $2)"
+            join_dims = [int(x) for x in join.attrib["Dimensions"].split()]
+            slabs = []
+            for slab in join.findall("DataItem"):
+                assert slab.attrib["ItemType"] == "HyperSlab"
+                slab_dims = [int(x) for x in slab.attrib["Dimensions"].split()]
+                spec_item, src_item = slab.findall("DataItem")
+                ndim = len(src_item.attrib["Dimensions"].split())
+                assert [int(x) for x in spec_item.attrib["Dimensions"].split()] == [3, ndim]
+                start, stride, count = np.fromstring(spec_item.text, sep=" ", dtype=int).reshape(3, ndim)
+                h5_file, h5_path = src_item.text.strip().split(":")
+                assert h5_file == "trajectory.h5" and src_item.attrib["Format"] == "HDF"
+                ds = f[h5_path]
+                assert [int(x) for x in src_item.attrib["Dimensions"].split()] == list(ds.shape)
+                idx = tuple(slice(s, s + k * d, d) for s, d, k in zip(start, stride, count))
+                arr = np.squeeze(ds[idx], axis=tuple(i for i, k in enumerate(count) if k == 1 and i < ndim - 3))
+                assert list(arr.shape) == slab_dims
+                slabs.append(arr)
+            m = np.stack(slabs, axis=-1)
+            assert list(m.shape) == join_dims
+
+            reg_attr = grid.find("./Attribute[@Name='regions']")
+            assert reg_attr.attrib["AttributeType"] == "Scalar" and reg_attr.attrib["Center"] == "Cell"
+            reg_item = reg_attr.find("DataItem")
+            h5_file, h5_path = reg_item.text.strip().split(":")
+            assert h5_file == "trajectory.h5" and reg_item.attrib["NumberType"] == "UInt"
+            reg = f[h5_path][()]
+            assert [int(x) for x in reg_item.attrib["Dimensions"].split()] == list(reg.shape)
+            frames.append((grid.attrib["Name"], t, topo, origin, spacing, m, reg))
+    return frames
+
+
+def test_xdmf_sidecar_slices_match_trajectory_h5(done):
+    _, out = done
+    frames = _eval_xdmf(out)
+    with h5py.File(out / "trajectory.h5") as f:
+        expected = [(f"stage{k}_{i}", s) for k in (1, 2, 3) for i, s in enumerate(f[f"stage{k}"]["m"][:])]
+        regions = f["regions"][()]
+    assert len(frames) == 7 and [t for _, t, *_ in frames] == list(range(7))
+    for (name, _, topo, origin, spacing, m, reg), (exp_name, exp_m) in zip(frames, expected):
+        assert name == exp_name and topo == [3, 4, 5]
+        assert origin == [0.0, 0.0, 0.0] and np.allclose(spacing, [2e-9, 2e-9, 2e-9], rtol=0, atol=1e-24)
+        assert np.linalg.norm(exp_m) > 0 and np.array_equal(m, np.moveaxis(exp_m, 0, -1))
+        assert np.array_equal(reg, regions)
+
 
 
 def restart(tmp_path, initial):
@@ -193,7 +260,7 @@ def test_cli_device_override_and_exit_codes(tmp_path, capsys):
 
 def test_a_failed_stage_keeps_its_outputs(tmp_path):
     card = tmp_path / "card.toml"
-    card.write_text(HEAD + "[initial]\nm = [0, 0, 1]\n" + """
+    card.write_text(HEAD.replace("[2e-9, 2e-9, 2e-9]", "[1e-9, 2e-9, 3e-9]") + "[initial]\nm = [0, 0, 1]\n" + """
 [[stage]]
 type = "llg-dynamics"
 alpha = 0.01
@@ -212,6 +279,11 @@ max_duration = 3e-12
     with h5py.File(out / "trajectory.h5") as f:
         assert f["failed"]["m"].shape == (3, 2, 3, 4) and "final" not in f
         assert np.allclose(f["failed"]["m"][:].reshape(3, -1).mean(axis=1), rows[-1, 4:7], rtol=0, atol=1e-15)
+        failed_m = f["failed"]["m"][:]
+    frames = _eval_xdmf(out)
+    assert len(frames) == 1 and frames[0][0] == "failed" and frames[0][1] == 0.0
+    assert np.allclose(frames[0][4], [3e-9, 2e-9, 1e-9], rtol=0, atol=1e-24)  # spacing is dz, dy, dx
+    assert np.array_equal(frames[0][5], np.moveaxis(failed_m, 0, -1))
     assert main(["run", str(card), "-o", str(tmp_path / "again")]) == 1
 
 

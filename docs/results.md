@@ -9,7 +9,8 @@ DIR/
 ├── git.diff                   # only if the checkout had uncommitted changes
 ├── stage1_llg-dynamics.csv    # one table per stage: stage<k>_<type>.csv
 ├── stage2_minimize.csv
-└── trajectory.h5              # magnetisation snapshots and the region map
+├── trajectory.h5              # magnetisation snapshots and the region map
+└── trajectory.xdmf            # XDMF sidecar for opening trajectory.h5 in ParaView
 ```
 
 ## Stage tables: `stage<k>_<type>.csv`
@@ -57,6 +58,10 @@ A later card can start from any saved state:
 file  = "../runs/sp4/trajectory.h5"
 state = "stage1"                    # or "final" (the default)
 ```
+
+## `trajectory.xdmf` (ParaView)
+
+`trajectory.xdmf` is a small XML sidecar that points directly into `trajectory.h5` without copying data. Open `trajectory.xdmf` in ParaView (choosing the **XDMF Reader**) to inspect the 3D cell-centred vector field `m` and scalar `regions` across all recorded snapshots on a single frame slider (`0, 1, ...`).
 
 ## `provenance.json`
 

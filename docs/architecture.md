@@ -18,7 +18,7 @@ Problem(grid, Ms, A, K, k, H_ext, device, regions, coupling, demag)             
 drivers: LLG (eq. 25, Dormand–Prince RK45)  ·  Minimizer (eqs. 22–23, Barzilai–Borwein)   src/llg.cpp, src/minimizer.cpp
    │  run.py loops over the stages: llg-dynamics, minimize, hysteresis (with refinement)
    ▼
-results folder: card.toml, provenance.json, stage<k>_<type>.csv, trajectory.h5            python/micromag/run.py
+results folder: card.toml, provenance.json, stage<k>_<type>.csv, trajectory.{h5,xdmf}      python/micromag/run.py
 ```
 
 ## Principles

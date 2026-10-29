@@ -14,6 +14,7 @@ import platform
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from importlib.metadata import version
 from pathlib import Path
@@ -134,7 +135,52 @@ class Microstate:
         self.f.flush()
 
     def close(self):
+        self._write_xdmf()
         self.f.close()
+
+    def _write_xdmf(self):
+        """Writes trajectory.xdmf next to trajectory.h5: a flat temporal sequence using HyperSlab + JOIN($0, $1, $2) (D28)."""
+        h5_path = Path(self.f.filename)
+        _, nz, ny, nx = self.shape
+        dx, dy, dz = (float(x) for x in self.f.attrs["cell"])
+        cell_dims, node_dims = f"{nz} {ny} {nx}", f"{nz + 1} {ny + 1} {nx + 1}"
+        frames = [
+            (f"stage{k}_{i}", f"/stage{k}/m", self.f[f"stage{k}"]["m"].shape, (i,))
+            for k in range(1, len(self.f) + 1) if f"stage{k}" in self.f
+            for i in range(self.f[f"stage{k}"]["m"].shape[0])
+        ]
+        if not frames and "failed" in self.f:
+            frames = [("failed", "/failed/m", self.f["failed"]["m"].shape, ())]
+
+        root = ET.Element("Xdmf", Version="2.0")
+        coll = ET.SubElement(ET.SubElement(root, "Domain"), "Grid",
+                             Name="trajectory", GridType="Collection", CollectionType="Temporal")
+        for idx, (name, ds_path, shape, prefix) in enumerate(frames):
+            grid = ET.SubElement(coll, "Grid", Name=name, GridType="Uniform")
+            ET.SubElement(grid, "Time", Value=str(idx))
+            ET.SubElement(grid, "Topology", TopologyType="3DCoRectMesh", Dimensions=node_dims)
+            geom = ET.SubElement(grid, "Geometry", GeometryType="ORIGIN_DXDYDZ")
+            ET.SubElement(geom, "DataItem", Format="XML", NumberType="Float", Precision="8", Dimensions="3").text = "0.0 0.0 0.0"
+            ET.SubElement(geom, "DataItem", Format="XML", NumberType="Float", Precision="8", Dimensions="3").text = f"{dz!r} {dy!r} {dx!r}"
+
+            m_attr = ET.SubElement(grid, "Attribute", Name="m", AttributeType="Vector", Center="Cell")
+            join = ET.SubElement(m_attr, "DataItem", ItemType="Function", Function="JOIN($0, $1, $2)", Dimensions=f"{cell_dims} 3")
+            src_dims = " ".join(str(d) for d in shape)
+            for c in range(3):
+                slab = ET.SubElement(join, "DataItem", ItemType="HyperSlab", Dimensions=cell_dims)
+                spec = (*prefix, c, 0, 0, 0, *([1] * len(shape)), *([1] * len(prefix)), 1, nz, ny, nx)
+                ET.SubElement(slab, "DataItem", Format="XML", NumberType="Int",
+                              Dimensions=f"3 {len(shape)}").text = " ".join(str(x) for x in spec)
+                ET.SubElement(slab, "DataItem", Format="HDF", NumberType="Float", Precision="8",
+                              Dimensions=src_dims).text = f"{h5_path.name}:{ds_path}"
+
+            reg = ET.SubElement(grid, "Attribute", Name="regions", AttributeType="Scalar", Center="Cell")
+            ET.SubElement(reg, "DataItem", Format="HDF", NumberType="UInt", Precision="1",
+                          Dimensions=cell_dims).text = f"{h5_path.name}:/regions"
+
+        ET.indent(root)
+        xdmf = '<?xml version="1.0" ?>\n<!DOCTYPE Xdmf SYSTEM "Xdmf.dtd" []>\n' + ET.tostring(root, encoding="unicode") + "\n"
+        h5_path.with_suffix(".xdmf").write_text(xdmf)
 
 
 def _schedule(end, rows_every, dump_every):

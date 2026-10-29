@@ -60,7 +60,7 @@ See [docs/gpu.md](docs/gpu.md) for Colab, Slurm clusters and architecture flags.
 $ uv run micromag run examples/grains.toml -o runs/grains
 stage 1/1 hysteresis: 64 fields, µ0H 0 → -6 T along [0.0175, 0.0, 0.9998], 22407 iterations; Hc -3.616 T, switching -3.616 T (71.8 s)
 $ ls runs/grains
-card.toml  provenance.json  stage1_hysteresis.csv  trajectory.h5
+card.toml  provenance.json  stage1_hysteresis.csv  trajectory.h5  trajectory.xdmf
 ```
 
 ## Documentation

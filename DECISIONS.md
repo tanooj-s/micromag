@@ -415,6 +415,10 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
   - The hysteresis stage runs its own loop in `run.py` rather than calling `mm.hysteresis`, so each row is written and flushed as it happens. `mm.hysteresis` stays as the in-memory API.
   - Floats are written to the CSV with `repr`, so a value read back is exactly the value computed.
   - `git_state` counts untracked files as dirty, but `git diff HEAD` does not include them.
+- **Refinement (2026-10-28, XDMF sidecar for ParaView):**
+  - `Microstate.close()` writes `trajectory.xdmf` next to `trajectory.h5` at the end of every run (including failed runs).
+  - The XDMF file holds a single flat `<Grid Name="trajectory" GridType="Collection" CollectionType="Temporal">` across all recorded stage snapshots `stage<k>_<i>` with `<Time Value="0"/>, <Time Value="1"/>, ...` (or `/failed` if the first stage failed before saving a stage snapshot).
+  - Each frame defines a `3DCoRectMesh` with node dimensions `(nz + 1, ny + 1, nx + 1)` and spacing `(dz, dy, dx)`, the `uint8` cell scalar `regions` pointing to `trajectory.h5:/regions`, and the cell vector `m` built zero-copy from the `(count, 3, nz, ny, nx)` SoA dataset via `Function="JOIN($0, $1, $2)"` over three 5D `HyperSlab` slices ($c \in \{0, 1, 2\}$) of `trajectory.h5:/stage<k>/m` (or 4D slices of `trajectory.h5:/failed/m`).
 - **Correction (2026-10-18, found by a 6b test):** for a 1×1×1 grid, `np.ascontiguousarray(np.broadcast_to(...))` returns the read-only broadcast view itself, so the starting m (and the axis array) could not be written and the minimizer rejected it. Both are now built with `np.empty` and filled in.
 - **Consequence:** h5py becomes a dependency. Its Linux wheels need glibc ≥ 2.28, so the optional cluster build needs a cap, like numpy. 6b's sweeps write one such folder per run.
 
