@@ -103,7 +103,7 @@ class Microstate:
     def __init__(self, path, card):
         self.f = h5py.File(path, "w")
         self.shape = (3, card.n[2], card.n[1], card.n[0])
-        self.f.attrs.update(n=list(card.n), cell=list(card.cell), cell_units="m", t_units="s", mu0_H_units="T",
+        self.f.attrs.update(n=list(card.n), cell=list(card.cell), pbc=list(card.pbc), cell_units="m", t_units="s", mu0_H_units="T",
                             m_layout="m[snapshot, component, z, y, x], x fastest; unit vectors")
 
     def stage(self, k, kind):
@@ -214,7 +214,7 @@ def run(card, out, device=None):
 
     nx, ny, nz = card.n
     p = paint(card)
-    prob = Problem(Grid(nx, ny, nz, *card.cell), p.Ms, p.A, p.K, p.axis, (0, 0, 0), device=device,
+    prob = Problem(Grid(nx, ny, nz, *card.cell, pbc=card.pbc), p.Ms, p.A, p.K, p.axis, (0, 0, 0), device=device,
                    regions=p.regions if p.coupling is not None else None, coupling=p.coupling, demag=card.demag)
     magnetic = prob.Ms > 0
 
@@ -228,7 +228,7 @@ def run(card, out, device=None):
         (out / "git.diff").write_text(git["diff"])
     prov = {
         "card": card.path.name, "status": "running", "error": None, "started": _now(), "finished": None,
-        "device": device, "gpu": _gpu_name() if device == "cuda" else None,
+        "device": device, "gpu": _gpu_name() if device == "cuda" else None, "pbc": list(card.pbc),
         "versions": {"micromag": version("micromag"), "numpy": np.__version__, "h5py": h5py.__version__,
                      "python": platform.python_version()},
         "git": None if git is None else {"hash": git["hash"], "dirty": git["dirty"]},

@@ -17,6 +17,7 @@ device = "cpu"              # optional: "cpu" (default) or "cuda"; `--device` on
 n    = [128, 32, 1]         # cells along x, y, z
 cell = [3.9e-9, 3.9e-9, 3e-9]
 demag = true                # optional; false switches the demag field off (D36)
+pbc = [0, 0, 0]             # optional; periodic copies per side along x, y, z (D45)
 
 [material.permalloy]        # one or more named materials; the FIRST fills the grid
 Ms = 8e5
@@ -36,8 +37,26 @@ type = "minimize"
 | `n` | 3 whole numbers ≥ 1 | required | cells along x, y, z |
 | `cell` | 3 positive numbers | required | cell size (m) |
 | `demag` | bool | `true` | include the demagnetizing field; `false` makes it zero in the field and the energies |
+| `pbc` | 3 whole numbers ≥ 0 | `[0, 0, 0]` | periodic copies per side along x, y, z; 0 is a free axis (see below) |
 
 Coordinates elsewhere in the card are measured in metres from the grid's lower corner. Cell (i, j, k) has its centre at ((i + ½) dx, (j + ½) dy, (k + ½) dz).
+
+### Periodic boundaries
+
+A nonzero `pbc` entry makes that axis periodic: the grid is one tile of a larger body, as in mumax3's `SetPBC` (D45).
+
+- **Exchange** wraps around: a cell on one face is the neighbour of the cell on the opposite face. This holds with `demag = false` too, and `[[coupling]]` applies across the wrapped face as across any other.
+- **Demag** counts P copies of the tile on each side, in a window centred on each cell, so every cell sees (2P+1) tile lengths of material along that axis. The body is finite on purpose: in 2D and 3D the field of an infinite lattice depends on the overall shape it fills, and here that shape is explicit. Convergence with P, as measured in the tests (D47): for a film periodic in x and y, the error in N_zz halves with each doubling of P (about 7·10⁻³ at P = 16 for a tile 4 cells wide and 1 thick); for a rod periodic in x it falls 4×. Larger tiles converge at a smaller P.
+- **Cost:** the demag kernel is summed over every copy once, at the start of a run: about 1 s for 128 × 128 × 1 cells at `pbc = [10, 10, 0]`, about 20 s for 64³ at `[5, 5, 5]` or 32³ at `[10, 10, 10]` (laptop CPU). A periodic axis needs no zero padding, so each step is cheaper than on a free grid.
+- **Grains** continue across a periodic boundary (minimum-image distances). `[[region]]` shapes do not wrap: a shape crossing an edge is clipped, and the volume warning reports it.
+- Energies are those of one tile. A restart may change `pbc`, like the cell size.
+
+```toml
+[grid]
+n    = [16, 16, 2]
+cell = [2e-9, 2e-9, 2e-9]
+pbc  = [10, 10, 0]          # an extended film: periodic in x and y, free top and bottom
+```
 
 ## `[material.<name>]`
 

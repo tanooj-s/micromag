@@ -5,10 +5,12 @@
 
 #include "fields.hpp"
 
-// Padded FFT length for an axis of n cells (D15): 2n, but an axis with one cell needs no padding.
-inline size_t padded(size_t n) { return n == 1 ? 1 : 2 * n; }
+// FFT length for an axis of n cells with P periodic copies per side: 2n zero padding on a free axis (D15), but an axis
+// with one cell needs none, and a periodic axis must wrap, so it is not padded (D45).
+inline size_t padded(size_t n, size_t P) { return P > 0 || n == 1 ? n : 2 * n; }
 
 // Demag tensor (6, Pz, Py, Px), components xx, yy, zz, xy, xz, yz, in FFT wraparound order (D14).
+// On a periodic axis, entry i sums the copies in a window centred on each cell (D45).
 std::vector<double> demag_tensor(const Grid& g);
 
 // eq. 21: H_i = -Σ_j N_ij Ms_j m_j by zero-padded FFT convolution. Owns the kernel spectrum and scratch (D16).

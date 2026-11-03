@@ -22,6 +22,7 @@ Physics tests take a `device` fixture, so each one runs on `cpu` and, on a CUDA 
 | `test_card.py`, `test_run.py` | card validation, the results folder, restarts, failure handling, refined hysteresis |
 | `test_coercivity.py` | µMAG SP2 and the Nd₂Fe₁₄B cubes |
 | `test_regions.py` | shapes, Voronoi grains, the boundary phase, the coupling table, the Stoner–Wohlfarth ensemble |
+| `test_pbc.py` | periodic boundaries: wrapped exchange exact on a spin spiral; the periodic FFT against a direct sum over each cell's window of copies; the rod (→ ½) and film (→ 1) limits at their convergence orders; the periodic cube (⅓, uniform field); periodic Voronoi against a brute-force oracle; a periodic perpendicular film on the Stoner–Wohlfarth astroid |
 | `test_thermal.py` | Philox against its known-answer vectors; the thermal field's variance and independence; Heun and RK23 orders at T = 0; uncoupled macrospins against the Boltzmann distribution and the Langevin curve, at two damping values; a single macrospin under heavy step rejection and the Brownian bridge; the escape rate against the Fokker–Planck operator (slow); CPU = CUDA |
 
 ## Validation against published results
@@ -34,6 +35,7 @@ Physics tests take a `device` fixture, so each one runs on `cpu` and, on a CUDA 
 | µMAG SP2: H_c/Ms at d/l_ex = 10 | 0.05446 | OOMMF 1.1: 0.05454 | −0.15% |
 | µMAG SP2: H_c/Ms at d/l_ex = 20 | 0.04960 | OOMMF 1.1: 0.04991 | −0.6% |
 | µMAG SP2: H_c/Ms at d/l_ex = 30 | 0.04533 | OOMMF 1.1: 0.04594; MagTense 0.04558 | −1.3% (known miss, open) |
+| Periodic perpendicular film (Q = 2.5, P = 10): switching at ψ = 30° | −0.79446 T | Stoner–Wohlfarth with H_K,eff: −0.79443 T | 2·10⁻⁵ T |
 | Stoner–Wohlfarth astroid, ψ = 15–75° | — | (cos^{2/3}ψ + sin^{2/3}ψ)^{−3/2} | ≤ 5·10⁻⁴ H_K |
 | Pure 40 nm Nd₂Fe₁₄B cube: switching field | 5.275 T | Fischbacher et al. 2017: 5.29 T | −0.3% |
 | 25 nm core–shell cube: H_c | 2.721 T | Fischbacher et al. 2018, Fig. 8a: 2.76 T | −0.04 T |

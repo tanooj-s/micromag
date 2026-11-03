@@ -113,9 +113,13 @@ NB_MODULE(_core, m) {
     m.def("scale", &scale, "x"_a, "a"_a, "cuda"_a = false);
 
     nb::class_<Grid>(m, "Grid")
-        .def(nb::init<size_t, size_t, size_t, double, double, double>(), "nx"_a, "ny"_a, "nz"_a, "dx"_a, "dy"_a, "dz"_a)
+        .def("__init__", [](Grid* g, size_t nx, size_t ny, size_t nz, double dx, double dy, double dz, std::array<size_t, 3> pbc) {
+            new (g) Grid(nx, ny, nz, dx, dy, dz, pbc[0], pbc[1], pbc[2]);
+        }, "nx"_a, "ny"_a, "nz"_a, "dx"_a, "dy"_a, "dz"_a, "pbc"_a = std::array<size_t, 3>{0, 0, 0},
+           "pbc: periodic copies per side along x, y, z; 0 is a free axis (D45, D46).")
         .def_ro("nx", &Grid::nx).def_ro("ny", &Grid::ny).def_ro("nz", &Grid::nz)
-        .def_ro("dx", &Grid::dx).def_ro("dy", &Grid::dy).def_ro("dz", &Grid::dz);
+        .def_ro("dx", &Grid::dx).def_ro("dy", &Grid::dy).def_ro("dz", &Grid::dz)
+        .def_prop_ro("pbc", [](const Grid& g) { return std::array<size_t, 3>{g.px, g.py, g.pz}; });
 
     // noconvert: a dtype or layout mismatch must raise, not silently copy (a copied `out` would lose the result).
     m.def("exchange_field", [](const Grid& g, In mag, In Ms, In A, Out out, Labels regions, Table coupling) {
@@ -139,7 +143,7 @@ NB_MODULE(_core, m) {
     m.def("demag_tensor", [](const Grid& g) {
         auto* N = new std::vector<double>(demag_tensor(g));
         nb::capsule owner(N, [](void* p) noexcept { delete static_cast<std::vector<double>*>(p); });
-        return nb::ndarray<nb::numpy, double>(N->data(), {6, padded(g.nz), padded(g.ny), padded(g.nx)}, owner);
+        return nb::ndarray<nb::numpy, double>(N->data(), {6, padded(g.nz, g.pz), padded(g.ny, g.py), padded(g.nx, g.px)}, owner);
     }, "grid"_a, "Demag tensor (6, Pz, Py, Px): xx, yy, zz, xy, xz, yz in FFT wraparound order (negative index = negative offset).");
 
     nb::class_<Demag>(m, "Demag")

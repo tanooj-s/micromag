@@ -44,7 +44,7 @@ def test_minimal_card_gets_its_defaults(tmp_path):
     assert c.device == "cpu"
     assert c.n == (4, 3, 2) and c.cell == (2e-9, 2e-9, 2e-9)
     (mat,) = c.materials.values()
-    assert list(c.materials) == ["permalloy"] and c.demag is True
+    assert list(c.materials) == ["permalloy"] and c.demag is True and c.pbc == (0, 0, 0)
     assert mat.Ms == 8e5 and isinstance(mat.Ms, float)  # `8e5` is a number in TOML, unlike in PyYAML (D27)
     assert mat.K == 0.0 and np.array_equal(mat.axis, [0, 0, 1])
     assert c.regions == [] and c.grains is None and c.couplings == []
@@ -76,6 +76,12 @@ def test_all_errors_are_reported_together(tmp_path):
 def test_grid_types_and_shapes_are_checked(tmp_path, bad, key):
     head = GRID.replace("n = [4, 3, 2]" if key == "n" else "cell = [2e-9, 2e-9, 2e-9]", bad)
     assert key in errors(tmp_path, LLG, head)
+
+
+@pytest.mark.parametrize("bad", ["[1, -1, 0]", "[1.5, 0, 0]", "[1, 0]", "[true, 0, 0]"])
+def test_pbc_is_three_whole_numbers(tmp_path, bad):
+    assert card(tmp_path, LLG, GRID.replace("[grid]", "[grid]\npbc = [2, 0, 1]")).pbc == (2, 0, 1)  # D46
+    assert "pbc" in errors(tmp_path, LLG, GRID.replace("[grid]", f"[grid]\npbc = {bad}"))
 
 
 @pytest.mark.parametrize("value", ['"fast"', "true", "-0.1"])

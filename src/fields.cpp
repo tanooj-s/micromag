@@ -4,7 +4,8 @@
 static double harmonic_mean(double a, double b) { return a + b > 0 ? 2 * a * b / (a + b) : 0.0; }
 
 // eq. 8: H = 2/(µ0 Ms) ∇·(A ∇m), discretised as the 6-neighbour sum of A_face (m_j - m_i) / d².
-// Missing (boundary) or vacuum neighbours contribute nothing: free (Neumann) surfaces (D11).
+// Missing (boundary) or vacuum neighbours contribute nothing: free (Neumann) surfaces (D11). On a periodic axis the
+// neighbour across the boundary is the cell on the opposite face (D45); with n = 1 that is the cell itself.
 // With a region map, a face between unlike regions r_i, r_j is scaled by pair[r_i, r_j] (D35).
 void exchange_field(const Grid& g, const double* m, const double* Ms, const double* A, double* H, const uint8_t* region,
                     const double* pair) {
@@ -21,12 +22,12 @@ void exchange_field(const Grid& g, const double* m, const double* Ms, const doub
                     for (size_t c = 0; c < 3; ++c) h[c] += w * (m[c * n + j] - m[c * n + i]);
                 };
                 if (Ms[i] != 0) {
-                    if (x > 0) add(i - 1, g.dx);
-                    if (x + 1 < g.nx) add(i + 1, g.dx);
-                    if (y > 0) add(i - sy, g.dy);
-                    if (y + 1 < g.ny) add(i + sy, g.dy);
-                    if (z > 0) add(i - sz, g.dz);
-                    if (z + 1 < g.nz) add(i + sz, g.dz);
+                    if (x > 0) add(i - 1, g.dx); else if (g.px) add(i + (g.nx - 1), g.dx);  // a periodic axis wraps (D45)
+                    if (x + 1 < g.nx) add(i + 1, g.dx); else if (g.px) add(i - (g.nx - 1), g.dx);
+                    if (y > 0) add(i - sy, g.dy); else if (g.py) add(i + (g.ny - 1) * sy, g.dy);
+                    if (y + 1 < g.ny) add(i + sy, g.dy); else if (g.py) add(i - (g.ny - 1) * sy, g.dy);
+                    if (z > 0) add(i - sz, g.dz); else if (g.pz) add(i + (g.nz - 1) * sz, g.dz);
+                    if (z + 1 < g.nz) add(i + sz, g.dz); else if (g.pz) add(i - (g.nz - 1) * sz, g.dz);
                 }
                 const double pre = Ms[i] != 0 ? 2 / (mu0 * Ms[i]) : 0.0;
                 for (size_t c = 0; c < 3; ++c) H[c * n + i] = pre * h[c];

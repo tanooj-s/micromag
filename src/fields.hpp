@@ -8,12 +8,14 @@ constexpr double pi = 3.141592653589793;
 constexpr double mu0 = 4e-7 * pi;  // D12: classical value, matches MuMax3 and µMAG references
 
 // Uniform grid. Arrays are C-order with x fastest: vectors (3, nz, ny, nx), scalars (nz, ny, nx) (D9).
+// px, py, pz: periodic copies per side on each axis, 0 for a free axis (D45, D46).
 struct Grid {
     size_t nx, ny, nz;
     double dx, dy, dz;
+    size_t px = 0, py = 0, pz = 0;
 
-    Grid(size_t nx, size_t ny, size_t nz, double dx, double dy, double dz)
-        : nx(nx), ny(ny), nz(nz), dx(dx), dy(dy), dz(dz) {
+    Grid(size_t nx, size_t ny, size_t nz, double dx, double dy, double dz, size_t px = 0, size_t py = 0, size_t pz = 0)
+        : nx(nx), ny(ny), nz(nz), dx(dx), dy(dy), dz(dz), px(px), py(py), pz(pz) {
         if (nx == 0 || ny == 0 || nz == 0) throw std::invalid_argument("grid needs at least one cell per axis");
         if (!(dx > 0 && dy > 0 && dz > 0)) throw std::invalid_argument("cell sizes must be positive");
     }

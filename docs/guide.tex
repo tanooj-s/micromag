@@ -1,0 +1,728 @@
+% micromag user guide. Build: latexmk -pdf -outdir=<tmp> docs/guide.tex, then copy guide.pdf into docs/.
+% Keep it in step with docs/cards.md and docs/results.md: a changed card key or output changes this file too.
+\documentclass[10pt,a4paper]{article}
+\usepackage[T1]{fontenc}
+\usepackage{newpxtext,newpxmath}
+\usepackage[scaled=0.85]{beramono}
+\usepackage[margin=2.2cm,top=2.4cm,bottom=2.4cm]{geometry}
+\usepackage{microtype,booktabs,tabularx,graphicx,enumitem,xcolor,listings,caption,fancyhdr,titlesec}
+\usepackage[hidelinks]{hyperref}
+
+\definecolor{accent}{HTML}{1F4E79}
+\definecolor{codebg}{HTML}{F4F6F8}
+\definecolor{comment}{HTML}{5A6B7B}
+\hypersetup{colorlinks=true,linkcolor=accent,urlcolor=accent,citecolor=accent}
+
+\titleformat{\section}{\Large\bfseries\color{accent}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{0.5em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{14pt}{6pt}
+\titlespacing*{\subsection}{0pt}{10pt}{4pt}
+
+\setlist{itemsep=1pt,topsep=3pt,parsep=0pt}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{4pt}
+
+\lstdefinelanguage{toml}{morecomment=[l]{\#},morestring=[b]",sensitive=true}
+\lstset{basicstyle=\ttfamily\small,backgroundcolor=\color{codebg},frame=none,xleftmargin=4pt,xrightmargin=4pt,
+  framexleftmargin=4pt,aboveskip=6pt,belowskip=6pt,columns=fullflexible,keepspaces=true,
+  commentstyle=\color{comment},stringstyle=\color{accent!80!black},showstringspaces=false,breaklines=true}
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{comment}micromag user guide}
+\fancyhead[R]{\small\color{comment}\nouppercase{\leftmark}}
+\fancyfoot[C]{\small\thepage}
+\renewcommand{\headrulewidth}{0.3pt}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\mo}{\mu_0}
+\newcommand{\vm}{\mathbf{m}}
+\newcommand{\vH}{\mathbf{H}}
+\newcommand{\kh}{\hat{\mathbf{k}}}
+\newcommand{\dec}[1]{\textcolor{comment}{\small(#1)}}
+\newcolumntype{Y}{>{\raggedright\arraybackslash}X}
+
+\begin{document}
+
+\begin{center}
+  {\Huge\bfseries\color{accent} micromag}\\[4pt]
+  {\Large A user's guide to the finite-difference micromagnetic solver}\\[6pt]
+  {\small\color{comment} version 0.0.1 \quad$\cdot$\quad \href{https://github.com/tanooj-s/micromag}{github.com/tanooj-s/micromag} \quad$\cdot$\quad GPL-3.0-or-later}
+\end{center}
+
+\vspace{4pt}
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=\textwidth]{img/hero-light.png}
+  \caption*{\small An 8-grain Nd$_2$Fe$_{14}$B polycrystal with a soft grain-boundary phase (left) and its demagnetisation
+  curve (right), run from \code{examples/grains.toml} in about a minute on a laptop CPU.}
+\end{figure}
+
+\tableofcontents
+
+% ---------------------------------------------------------------------------------------------------------------------
+\section{What micromag is}
+
+micromag computes how the magnetisation inside a small magnet, from a few nanometres to a few hundred, arranges itself
+and moves. It divides the magnet into a regular grid of box-shaped cells, gives each cell a magnetisation direction
+$\vm$ (a unit vector), and then either lets $\vm$ evolve in time or searches for the arrangement of lowest energy.
+
+It is written from scratch in C++, with an optional CUDA backend, and driven from Python. It follows the micromagnetic
+model of the review by Fischbacher \emph{et al.}\ (2018) \cite{fischbacher2018}, and its scope is modelled on the
+micromagnetic part of MagTense. A simulation is described by one TOML file, the \emph{input card}, and produces one
+results folder.
+
+\textbf{What it can do.}
+\begin{itemize}
+  \item Four energy terms: exchange, uniaxial anisotropy, an applied (Zeeman) field and the magnetostatic (demagnetising)
+        field, the last computed exactly from the Newell tensor by FFT.
+  \item Three kinds of calculation: time evolution by the Landau--Lifshitz--Gilbert (LLG) equation, energy minimisation,
+        and quasi-static hysteresis sweeps with automatic refinement near switching.
+  \item A thermal field (Brown's stochastic field) for finite-temperature dynamics.
+  \item Materials that vary cell by cell: named materials painted onto the grid as shapes, Voronoi polycrystals with
+        per-grain easy axes and an optional grain-boundary phase, and exchange coupling set per pair of regions.
+  \item Free or periodic boundaries on any axis, so a small tile can stand in for an extended film, a wire or bulk
+        material.
+  \item The same card on a CPU or an NVIDIA GPU, in double precision, with the same results on both.
+\end{itemize}
+
+\textbf{What it does not do (yet).} Cubic or higher-order anisotropy, the Dzyaloshinskii--Moriya interaction,
+magnetoelastic coupling, spatially varying applied fields or temperatures, and multi-GPU runs are not
+implemented. For production research, the mature codes are mumax3, OOMMF, MagTense and Ubermag; micromag is a young code
+validated against the standard benchmarks (Section~\ref{sec:validation}).
+
+\textbf{Conventions.} SI units throughout: A/m, J/m, J/m$^3$, m, s, K. Applied fields in the card are given as
+$\mo\vH$ in \emph{tesla}, because the literature quotes T and mT. Damping is the \emph{dimensionless Gilbert} $\alpha$.
+Each design choice has a numbered entry D1, D2, \ldots{} in \code{DECISIONS.md}, with the alternatives that were
+rejected; this guide cites them in grey, e.g.\ \dec{D11}.
+
+% ---------------------------------------------------------------------------------------------------------------------
+\section{Installing and running}
+
+micromag builds from source with \href{https://docs.astral.sh/uv/}{uv}. You need a C++17 compiler; uv fetches Python
+($\geq$ 3.11), CMake and the Python dependencies.
+\begin{lstlisting}[language=bash]
+git clone https://github.com/tanooj-s/micromag.git
+cd micromag
+uv sync                                     # CPU build
+uv run micromag run examples/grains.toml -o runs/grains
+\end{lstlisting}
+The run prints one progress line per stage and writes \code{runs/grains/}. The output folder must be new or empty, so a
+result is never overwritten.
+
+\textbf{GPU build.} Install the CUDA toolkit (12.x or 13.x) with \code{nvcc} on \code{PATH}, then
+\begin{lstlisting}[language=bash]
+export SKBUILD_CMAKE_DEFINE="MICROMAG_CUDA=ON"
+uv sync
+uv run python -c "import micromag; print(micromag.has_cuda)"     # True
+uv run micromag run examples/sp2.toml -o runs/sp2 --device cuda
+\end{lstlisting}
+Keep \code{SKBUILD\_CMAKE\_DEFINE} set in every later shell: \code{uv run} rebuilds when it changes, so forgetting it
+silently rebuilds a CPU-only extension. Any NVIDIA GPU of compute capability 7.0 or newer works with CUDA 12 (7.5 with
+CUDA 13). Because everything is float64, data-centre cards (V100, A100, H100) are much faster than consumer cards or the
+T4. \code{docs/gpu.md} covers Google Colab and Slurm clusters.
+
+\textbf{Apple Silicon.} If the \code{cmake} on \code{PATH} is an x86\_64 binary, \code{export ARCHFLAGS="-arch arm64"}
+first, or the extension builds for the wrong architecture.
+
+\textbf{Tests.} \code{uv run pytest} runs the fast suite (about a minute). \code{uv run pytest -m slow -s} runs the
+physics benchmarks (about 15 minutes on a laptop CPU) and prints the comparisons.
+
+% ---------------------------------------------------------------------------------------------------------------------
+\section{The physical model}
+
+The state is the unit vector field $\vm(\mathbf{r}) = \mathbf{M}/M_s$. Each cell carries its own saturation
+magnetisation $M_s$, exchange stiffness $A$, anisotropy constant $K$ and easy axis $\kh$. The total energy is the sum of
+four terms, and each has an effective field $\vH = -\frac{1}{\mo M_s}\,\delta E/\delta\vm$ (Table~\ref{tab:terms}).
+
+\begin{table}[h]
+\centering\small
+\caption{The energy terms. Equation numbers refer to Fischbacher \emph{et al.}\ (2018).}
+\label{tab:terms}
+\renewcommand{\arraystretch}{1.9}
+\begin{tabularx}{\textwidth}{@{}l c >{$}l<{$} >{$}l<{$} Y@{}}
+\toprule
+Term & Eq. & \text{Energy density} & \text{Field } \vH & Parameters \\
+\midrule
+Exchange   & 8  & A\,|\nabla\vm|^2              & \dfrac{2}{\mo M_s}\nabla\cdot(A\nabla\vm)      & $A$ (J/m) \\
+Anisotropy & 9  & -K(\vm\cdot\kh)^2             & \dfrac{2K}{\mo M_s}(\vm\cdot\kh)\,\kh           & $K$ (J/m$^3$), $\kh$ \\
+Zeeman     & 11 & -\mo M_s\,\vm\cdot\vH_\mathrm{ext} & \vH_\mathrm{ext}                           & $\mo\vH_\mathrm{ext}$ (T), per stage \\
+Demag      & 17--21 & -\tfrac12\mo M_s\,\vm\cdot\vH_d & \vH_d = -\mathcal{N} * (M_s\vm)            & none (geometry) \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The anisotropy uses the paper's sign: a uniform $\vm \parallel \kh$ has energy $-KV$ \dec{D12}. $K > 0$ gives an easy
+axis, $K < 0$ an easy plane. Vacuum is simply $M_s = 0$: such cells have no field, no energy and no exchange neighbours
+\dec{D11}.
+
+\textbf{Dynamics.} The LLG equation (eq.~25) is integrated in its Landau--Lifshitz form,
+\[
+  \frac{d\vm}{dt} = -\gamma'\,\vm\times\vH_\mathrm{eff} - \alpha\gamma'\,\vm\times(\vm\times\vH_\mathrm{eff}),
+  \qquad \gamma' = \frac{\mo|\gamma|}{1+\alpha^2},
+\]
+with $\vH_\mathrm{eff}$ the sum of the four fields (plus the thermal field at $T>0$). The first term makes $\vm$ precess
+about the field; the second, the damping, turns it towards the field. $\gamma$ defaults to $1.76086\times10^{11}$
+rad/(T\,s).
+
+\textbf{Equilibrium.} For slowly varying fields, as in a permanent magnet's hysteresis loop, the magnetisation sits in a
+local energy minimum at each field (paper \S2.2.3). Equilibrium means zero torque, $\vm\times\vH_\mathrm{eff} = 0$, and
+every stopping test in micromag is on the largest per-cell torque $\max|\vm\times\vH_\mathrm{eff}|/M_s$.
+
+\textbf{Temperature.} Brown's model adds a Gaussian white-noise field $\vH_\mathrm{th}$ to $\vH_\mathrm{eff}$,
+independent in every cell, component and step, with variance fixed by the fluctuation--dissipation theorem
+\dec{D41}:
+\[
+  \sigma^2 = \frac{2\,\alpha\,k_B T}{\mo\,\gamma_0\,M_s\,V\,\Delta t}, \qquad \gamma_0 = \mo|\gamma|,
+\]
+where $V$ is the cell volume and $\Delta t$ the step. Larger damping needs stronger noise; a larger moment $M_sV$ needs
+less. There is no $1+\alpha^2$ factor: the noise enters $\vH$ in Gilbert's form, as in mumax3.
+
+% ---------------------------------------------------------------------------------------------------------------------
+\section{Implementation choices}
+
+This section explains the numerical choices a user should know about, because they set accuracy, cost and the limits
+of what can be simulated.
+
+\subsection{Grid and data layout}
+The grid is a box of $n_x\times n_y\times n_z$ cells of size $\Delta x\times\Delta y\times\Delta z$. Coordinates in the
+card are measured in metres from the lower corner; cell $(i,j,k)$ is centred at
+$((i+\frac12)\Delta x, (j+\frac12)\Delta y, (k+\frac12)\Delta z)$. All arrays are float64 \emph{structure-of-arrays}:
+vectors are shaped \code{(3, nz, ny, nx)} and scalars \code{(nz, ny, nx)}, with $x$ fastest \dec{D9}. This layout feeds
+the FFTs and the GPU directly. Every material parameter is stored per cell, so the solver core never knows about shapes
+or grains: geometry is expanded into per-cell arrays in Python, and new geometry never touches C++.
+
+\subsection{Exchange}
+A second-order six-neighbour Laplacian \dec{D11}. The coupling across a face between two cells uses the
+\emph{harmonic mean} $A_\mathrm{face} = 2A_1A_2/(A_1+A_2)$, which is zero if either side is zero, so a hard grain cannot
+couple straight through a non-magnetic boundary. The surfaces are free (Neumann): a missing or vacuum neighbour
+contributes nothing. Across faces between two different regions, $A_\mathrm{face}$ can be scaled or replaced by a
+\code{[[coupling]]} entry \dec{D35}, which models thin, weak interfaces without resolving them with cells. On a periodic
+axis the neighbour across the boundary is the cell on the opposite face \dec{D45}.
+
+\subsection{Demagnetising field}
+The demagnetising field is a convolution of the magnetisation with the demagnetisation tensor $\mathcal{N}$, which
+depends only on the offset between two cells \dec{D14, D15}.
+\begin{itemize}
+  \item \textbf{Tensor.} The exact Newell formulas for cell pairs closer than 20 cells; beyond that, a point-dipole kernel
+        averaged over $3\times3\times3$ Gauss points in each cell, because Newell's formulas lose precision far away
+        (they sum 27 large, nearly cancelling terms). The tensor is accurate to about $10^{-6}$ relative, far below the
+        $O(\Delta x^2)$ discretisation error. Cells flatter than about 1:4 are untested.
+  \item \textbf{Convolution.} Zero-padded to $2n$ per free axis (an axis with $n=1$ stays at 1) and done with real-to-complex
+        FFTs: pocketfft on the CPU, cuFFT on the GPU. The tensor's spectrum is computed once per run.
+  \item \textbf{Cost.} The padding makes demag the dominant cost in memory and time: about $8\times$ the cell count per
+        padded array. Cell counts with small prime factors transform fastest.
+  \item \textbf{Switch.} \code{demag = false} in \code{[grid]} removes the term, e.g.\ for Stoner--Wohlfarth comparisons
+        \dec{D36}.
+\end{itemize}
+
+\subsection{Periodic boundaries}
+\code{pbc = [Px, Py, Pz]} makes an axis periodic, with $P$ copies of the tile on each side, as in mumax3's
+\code{SetPBC} \dec{D45}. The exchange neighbour wraps around, and Voronoi grains continue across the boundary.
+For demag, a periodic axis is not padded, so the FFT's own wrap-around is used on purpose, and each tensor entry sums
+the copies in a window centred on each cell: every cell sees $(2P+1)$ tile lengths of material, with the two end
+layers at half weight when $n$ is even. The copies are a \emph{finite} block on purpose: in 2D and 3D, the field of an
+infinite lattice of copies depends on the shape of the body they fill, so the shape is made explicit. Each copy uses
+the same Newell and dipole kernels. The sum costs about 1\,s for $128\times128\times1$ cells at $P=10$ and about 20\,s
+for $64^3$ cells at $P=5$, once per run. The error left by a finite $P$ shrinks slowly: halving with each doubling of
+$P$ for a film, and falling 4$\times$ for a rod.
+
+\subsection{Time integration}
+\begin{itemize}
+  \item \textbf{\code{rk45}} (default at $T=0$). An adaptive Dormand--Prince 5(4) integrator \dec{D18}. The error is
+        the largest per-cell $|\vm_5-\vm_4|$, so a few fast-switching cells in a large grid are not averaged away. A step
+        is rejected when the error exceeds \code{tol}; the next step is $h\cdot0.9(\mathrm{tol}/\mathrm{err})^{1/5}$,
+        clamped to 0.2--5$\times$. $\vm$ is renormalised after every accepted step. Six field evaluations per step.
+  \item \textbf{\code{heun}} (default at $T>0$). A fixed step \code{dt}. One noise sample per step, held over the
+        predictor and the corrector, which converges to Brown's (Stratonovich) equation \dec{D42}. Two field
+        evaluations per step.
+  \item \textbf{\code{rk23}}. Adaptive Bogacki--Shampine 3(2) with the noise frozen over each step. When a step is
+        rejected, its random increment is \emph{not} thrown away (that would favour steps where the noise happened to be
+        small and bias the temperature); an exact Brownian bridge splits it between the shorter retry and the rest.
+        Three field evaluations per step.
+\end{itemize}
+The random numbers come from a counter-based Philox4x32-10 generator, written once and shared by the CPU and GPU, keyed
+by the stage's \code{seed} and its position in the card. The same card and seed give the same run on either device.
+
+\subsection{Energy minimisation and hysteresis}
+\code{minimize} is projected steepest descent with Barzilai--Borwein step sizes (eqs.~22--23, Exl \emph{et al.}\ 2014;
+essentially mumax3's minimiser) \dec{D21}. The direction is $-\vm\times(\vm\times\vH)$, the update is renormalised, and
+the step alternates the two BB formulas with no line search. The energy may rise on single iterations; convergence is
+judged by the torque only. If \code{max\_iter} is reached the stage fails, so a half-converged state near a switching
+field is never reported silently.
+
+A \code{hysteresis} stage minimises at each field of a sweep. With \code{refine\_to}, a coarse step that crosses
+$\vm\cdot\hat{\mathbf{h}}=0$ or makes $\langle\vm\rangle$ jump is undone and halved, recursively, down to
+\code{refine\_to} \dec{D31}. A loop then costs about 45 field steps instead of about 600, with the switch still resolved
+finely.
+
+\subsection{Backends}
+The drivers (step control, BB steps, refinement) are written once. The per-cell arithmetic sits behind a small backend
+interface with two implementations: the CPU backend, which is the reference ``oracle'', and the CUDA backend, one thread
+per entry, with cuFFT and CUB \dec{D24}. Every CUDA kernel is tested against the CPU. Within a call, $\vm$ stays on the
+device; it is copied to and from the host only at the start and end of a \code{run\_until} or \code{minimize}. There is
+no global state, so several problems can coexist in one Python process.
+
+% ---------------------------------------------------------------------------------------------------------------------
+\section{Kinds of simulations}
+
+A card has a few setup sections, then an ordered list of stages. The magnetisation carries over from one stage to the
+next; the applied field does \emph{not}: every stage states its own field, defaulting to zero. Table~\ref{tab:sims} maps
+common questions to stage types.
+
+\begin{table}[h]
+\centering\small
+\caption{Typical simulations and how to set them up.}
+\label{tab:sims}
+\begin{tabularx}{\textwidth}{@{}>{\raggedright\arraybackslash}p{3.6cm} >{\raggedright\arraybackslash}p{3.3cm} Y@{}}
+\toprule
+Question & Stage(s) & Notes and example \\
+\midrule
+What is the ground state or a metastable state? & \code{minimize} & Fastest route to equilibrium. Start from several initial
+  states and compare energies (as in $\mu$MAG SP3, flower vs vortex). \\
+How does $\vm$ move in time? & \code{llg-dynamics} with \code{duration} & Physical $\alpha$ and $\gamma$; sample with
+  \code{sample\_every}. Example: \code{examples/sp4.toml} (switching a permalloy film). \\
+Relax with real dynamics & \code{llg-dynamics} with \code{until\_torque} & Large $\alpha$ (e.g.\ 1); stops when the
+  torque is small. Used for SP4's S-state. \\
+Coercivity, remanence, switching field & \code{hysteresis} & Quasi-static sweep with \code{refine\_to}; summary
+  \code{Hc\_T}, \code{switch\_T}, \code{remanence}. Examples: \code{sp2.toml}, \code{cube\_core\_shell.toml}. \\
+Microstructure effects & \code{hysteresis} + \code{[grains]}, \code{[[region]]}, \code{[[coupling]]} & Grains, boundary
+  phases, soft shells, weak interfaces. Example: \code{grains.toml}. \\
+Thermal fluctuations, superparamagnetism & \code{llg-dynamics} with \code{temperature} & \code{heun} or \code{rk23};
+  noisy time series of $\langle\vm\rangle$. Barriers of a few $k_BT$ only (Section~\ref{sec:thermal}). \\
+Bulk or extended material & \code{[grid] pbc = [P, P, P]} & A periodic tile without an artificial outer surface;
+  check the result at two values of $P$. \\
+Continue from an earlier result & \code{[initial] file = ...} & Restart from any saved state, even on a different cell
+  size. \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\textbf{A full hysteresis loop} is two \code{hysteresis} stages, one sweeping down and one back up.
+\textbf{A field slightly off the easy axis} (e.g.\ 1$^\circ$) is the convention for hard-magnet cubes: exactly along the
+axis, the reversed state is an exact but unstable equilibrium that a minimiser may never leave.
+
+\textbf{Example: $\mu$MAG standard problem 4}, relax then switch (\code{examples/sp4.toml}):
+\begin{lstlisting}[language=toml]
+[grid]
+n    = [128, 32, 1]                    # cells along x, y, z
+cell = [3.90625e-9, 3.90625e-9, 3e-9]  # m
+
+[material.permalloy]
+Ms = 8e5        # A/m
+A  = 1.3e-11    # J/m
+
+[initial]
+m = [1, 1, 1]   # normalised on load
+
+[[stage]]       # the S-state: damped dynamics until the torque is small
+type = "llg-dynamics"
+alpha = 1.0
+gamma = 1.759457895880903e11   # rad/(T s), as muMAG specifies
+tol = 1e-9                     # well below until_torque
+until_torque = 1e-6
+check_every = 50e-12
+max_duration = 20e-9
+
+[[stage]]       # the reversal, sampled every 1 ps
+type = "llg-dynamics"
+alpha = 0.02
+gamma = 1.759457895880903e11
+mu0_H = [-24.6e-3, 4.3e-3, 0.0]   # T
+duration = 1e-9
+sample_every = 1e-12
+\end{lstlisting}
+
+\textbf{Example: a polycrystal} (\code{examples/grains.toml}, abridged): eight Nd$_2$Fe$_{14}$B grains with axes within
+15$^\circ$ of $z$, coated by a 4\,nm soft phase, swept to $-6$\,T.
+\begin{lstlisting}[language=toml]
+[grid]
+n    = [20, 20, 20]
+cell = [2e-9, 2e-9, 2e-9]
+
+[material.grain]            # listed first: region 0, the background
+Ms = 1281197.29             # A/m (mu0 Ms = 1.61 T)
+A  = 8e-12
+K  = 4.9e6
+
+[material.boundary]
+Ms = 379584.54              # A/m (mu0 Ms = 0.477 T)
+A  = 6.12e-12
+
+[grains]
+count    = 8
+first_id = 1
+material = "grain"
+seed     = 1
+axes     = { mean = [0, 0, 1], cone_deg = 15 }
+boundary = { thickness = 4e-9, material = "boundary", id = 100 }
+
+[initial]
+m = [0.0174524, 0.0, 0.9998477]
+
+[[stage]]
+type       = "hysteresis"
+direction  = [0.0174524, 0.0, 0.9998477]   # 1 degree off z
+mu0_H_from = 0.0
+mu0_H_to   = -6.0
+mu0_H_step = 0.1
+refine_to  = 1e-3
+\end{lstlisting}
+
+% ---------------------------------------------------------------------------------------------------------------------
+\section{Input card reference}
+\label{sec:cards}
+
+Validation is strict and happens before anything runs: an unknown key, a missing key or a wrong type is an error, and
+every problem in the card is reported together. ``req.''\ marks a required key.
+
+\subsection{Top level and \code{[grid]}}
+\begin{tabularx}{\textwidth}{@{}l l l Y@{}}
+\toprule
+Key & Type & Default & Meaning \\
+\midrule
+\code{device} & string & \code{"cpu"} & \code{"cpu"} or \code{"cuda"}; \code{--device} on the command line overrides it \\
+\code{n} & 3 integers $\geq 1$ & req. & cells along $x, y, z$ \\
+\code{cell} & 3 numbers $>0$ & req. & cell size (m) \\
+\code{demag} & bool & \code{true} & include the demagnetising field \\
+\code{pbc} & 3 integers $\geq0$ & \code{[0,0,0]} & periodic copies per side along $x, y, z$; 0 is a free axis \\
+\bottomrule
+\end{tabularx}
+
+\subsection{\code{[material.<name>]}}
+One or more named materials. The \emph{first} one listed fills the whole grid as region~0, the background. The name
+\code{vacuum} is built in ($M_s=0$) and reserved.
+
+\begin{tabularx}{\textwidth}{@{}l l l Y@{}}
+\toprule
+Key & Type & Default & Meaning \\
+\midrule
+\code{Ms} & number $\geq 0$ & req. & saturation magnetisation (A/m); 0 is vacuum \\
+\code{A} & number $\geq 0$ & req. & exchange stiffness (J/m) \\
+\code{K} & number & 0 & uniaxial anisotropy (J/m$^3$); energy $-K(\vm\cdot\kh)^2$ \\
+\code{axis} & 3 numbers & \code{[0,0,1]} & easy axis $\kh$, normalised on load \\
+\bottomrule
+\end{tabularx}
+
+\subsection{\code{[[region]]}: painted shapes}
+Regions are painted in card order, and later paints win. A cell belongs to a shape if its \emph{centre} is inside it.
+The region map is \code{uint8}, so ids run from 0 to 255.
+
+\begin{tabularx}{\textwidth}{@{}l l l Y@{}}
+\toprule
+Key & Type & Default & Meaning \\
+\midrule
+\code{id} & integer 1--255 & req. & region id (0 is the background) \\
+\code{material} & string & req. & a defined material or \code{"vacuum"} \\
+\code{shape} & string & req. & \code{all}, \code{cuboid}, \code{cylinder} or \code{ellipsoid} \\
+\code{inverse} & bool & \code{false} & paint everything \emph{outside} the shape \\
+\code{axis} & 3 numbers & material's & override the easy axis in this region \\
+\midrule
+\multicolumn{4}{@{}l}{\emph{Shape keys}} \\
+\code{cuboid} & \multicolumn{3}{Y}{\code{corners = [[x0,y0,z0],[x1,y1,z1]]}; lower bounds inside, upper outside} \\
+\code{cylinder} & \multicolumn{3}{Y}{\code{center}, \code{radius}, \code{height}; axis along $z$} \\
+\code{ellipsoid} & \multicolumn{3}{Y}{\code{center}, \code{semi\_axes = [a,b,c]}} \\
+\bottomrule
+\end{tabularx}
+
+The results record each region's exact volume next to its painted volume, and warn when they differ by more than 5\%,
+which catches shapes clipped by the grid or too coarsely resolved. To make a sphere, paint \code{vacuum} with an
+\code{ellipsoid} and \code{inverse = true}.
+
+\subsection{\code{[grains]}: Voronoi polycrystals}
+Optional, applied after all \code{[[region]]} painting. It fills one region with 3D Voronoi grains: each cell joins the
+grain of its nearest seed. Seeds are drawn uniformly over the box, so the grains do not depend on the cell size.
+
+\begin{tabularx}{\textwidth}{@{}l l l Y@{}}
+\toprule
+Key & Type & Default & Meaning \\
+\midrule
+\code{count} & integer $\geq1$ & req. & number of grains \\
+\code{first\_id} & integer 1--255 & req. & grains get ids \code{first\_id} \ldots{} \code{first\_id+count-1} ($\leq 255$) \\
+\code{material} & string & req. & the grains' material \\
+\code{seed} & integer $\geq0$ & req. & same seed, same grains and axes \\
+\code{within} & region id & 0 & the region to fill \\
+\code{axes} & see text & \code{"material"} & easy axis per grain \\
+\code{boundary} & table & none & grain-boundary phase \\
+\bottomrule
+\end{tabularx}
+
+\code{axes} is \code{"material"} (every grain uses the material's axis), \code{"random"} (isotropic), or
+\code{\{ mean = [x,y,z], cone\_deg = $\theta$ \}} (uniform within $\theta$ of the mean, $0<\theta\leq90$).
+\code{boundary = \{ thickness = t, material = "...", id = n \}} coats each grain face: a cell closer than $t/2$ to its
+grain's boundary joins region $n$, so neighbouring grains are separated by $t$. The distance is computed exactly from the
+bisecting planes between seeds. $t$ must be at least two cells; thinner boundaries are modelled with \code{[[coupling]]}.
+On a periodic axis the grains use minimum-image distances and continue across the boundary; painted shapes do not wrap.
+
+\subsection{\code{[[coupling]]}: exchange between regions}
+{\sloppy Rescales the exchange across faces between two regions, as mumax3's \code{ext\_ScaleExchange} and
+\code{ext\_InterExchange} do. Exchange inside a region is unchanged; later entries win.\par}
+
+\begin{tabularx}{\textwidth}{@{}l l Y@{}}
+\toprule
+Key & Type & Meaning \\
+\midrule
+\code{regions} & \code{[a, b]} & two region ids, or \code{"grains"} for every grain id; $a\neq b$.
+  \code{["grains","grains"]} means every pair of distinct grains \\
+\code{scale} & number $\geq0$ & multiplies the harmonic-mean $A$ across those faces \\
+\code{A} & number $\geq0$ & sets the face exchange (J/m) directly \\
+\bottomrule
+\end{tabularx}
+Give exactly one of \code{scale} or \code{A}. \code{scale = 0} decouples the regions completely.
+
+\subsection{\code{[initial]}}
+Exactly one of \code{m = [x, y, z]} (a uniform start, normalised) or \code{file = "path/trajectory.h5"} (relative to
+the card) with an optional \code{state}: \code{"final"} (default) or \code{"stage<k>"}, the last snapshot of stage $k$.
+A restart needs the same cell counts \code{n}; the cell size may differ. The file's SHA-256 goes into the provenance.
+
+\subsection{\code{[[stage]]}, \code{type = "minimize"}}
+\begin{tabularx}{\textwidth}{@{}l l Y@{}}
+\toprule
+Key & Default & Meaning \\
+\midrule
+\code{mu0\_H} & \code{[0,0,0]} & applied field (T) \\
+\code{torque\_tol} & \code{1e-6} & stop when $\max|\vm\times\vH|/M_s$ falls below this \\
+\code{max\_iter} & \code{100000} & fail after this many iterations \\
+\bottomrule
+\end{tabularx}
+
+\subsection{\code{[[stage]]}, \code{type = "hysteresis"}}
+\begin{tabularx}{\textwidth}{@{}l l Y@{}}
+\toprule
+Key & Default & Meaning \\
+\midrule
+\code{direction} & req. & field direction, normalised \\
+\code{mu0\_H\_from}, \code{mu0\_H\_to} & req. & field range along \code{direction} (T), inclusive \\
+\code{mu0\_H\_step} & req. & step (T); must divide the range into whole steps \\
+\code{torque\_tol}, \code{max\_iter} & \code{1e-6}, \code{100000} & as for \code{minimize} \\
+\code{refine\_to} & none & halve any step that crosses $\vm\cdot\hat{\mathbf h}=0$ or jumps, down to this (T) \\
+\code{refine\_jump} & \code{0.1} & a change $|\Delta\langle\vm\rangle|$ above this counts as a jump \\
+\code{dump} & \code{false} & save a snapshot at every field, not just the last \\
+\bottomrule
+\end{tabularx}
+
+The stage reports \code{Hc\_T}, the first zero of $\vm\cdot\hat{\mathbf h}$ (linearly interpolated); \code{switch\_T},
+the midpoint of the largest jump; and \code{remanence}, $\langle\vm\rangle$ at zero field if the sweep passes through it.
+
+\subsection{\code{[[stage]]}, \code{type = "llg-dynamics"}}
+\begin{tabularx}{\textwidth}{@{}l l Y@{}}
+\toprule
+Key & Default & Meaning \\
+\midrule
+\code{alpha} & req. & Gilbert damping (dimensionless) \\
+\code{gamma} & \code{1.76086e11} & gyromagnetic ratio (rad/(T\,s)) \\
+\code{mu0\_H} & \code{[0,0,0]} & applied field (T) \\
+\code{method} & \code{rk45} ($T=0$), \code{heun} ($T>0$) & \code{rk45} ($T=0$ only), \code{heun} (fixed step) or \code{rk23} (adaptive) \\
+\code{tol} & \code{1e-6} & per-step error tolerance (\code{rk45}, \code{rk23}) \\
+\code{max\_step} & none & largest step (s) (\code{rk45}, \code{rk23}) \\
+\code{dt} & req.\ for \code{heun} & fixed step (s); only with \code{heun} \\
+\code{temperature} & 0 & temperature (K) \\
+\code{seed} & req.\ at $T>0$ & noise seed, an integer $0$ to $2^{32}-1$ \\
+\code{dump\_every} & none & snapshot interval (s) \\
+\midrule
+\multicolumn{3}{@{}l}{\emph{Stopping rule: exactly one of}} \\
+\code{duration} & & run time (s), with optional \code{sample\_every} (s) for table rows \\
+\code{until\_torque} & & stop when $\max|\vm\times\vH|/M_s$ is below this; needs \code{check\_every} and
+  \code{max\_duration} (s), and \code{tol} $\leq$ \code{until\_torque}/100. Refused at $T>0$ \\
+\bottomrule
+\end{tabularx}
+
+% ---------------------------------------------------------------------------------------------------------------------
+\section{Choosing numerical parameters}
+
+micromag never picks the cell size, the step or the tolerances for you. These rules of thumb come from the benchmarks.
+
+\textbf{Cell size.} A cell must be smaller than the shortest length over which $\vm$ turns. Two lengths matter:
+the exchange length $l_\mathrm{ex} = \sqrt{2A/(\mo M_s^2)}$, which sets vortex and flux-closure structures, and the
+wall parameter $\delta_0 = \sqrt{A/K}$ (a Bloch wall is $\pi\delta_0$ wide), which matters in hard magnets. For
+permalloy, $l_\mathrm{ex}\approx 5.7$\,nm; for Nd$_2$Fe$_{14}$B, $l_\mathrm{ex}\approx 2.8$\,nm and
+$\delta_0\approx 1.3$\,nm. The benchmarks used $0.5\,l_\mathrm{ex}$ for $\mu$MAG SP2, $0.7\,l_\mathrm{ex}$ for SP4, and
+1--1.3\,nm for the Nd$_2$Fe$_{14}$B cubes. In the hard-magnet benchmarks, coarser meshes gave higher coercive fields, so
+\textbf{check any result by refining the mesh once}. Keep cells close to cubic; aspect ratios beyond 1:4 are untested
+for the demag tensor.
+
+\textbf{Grid size.} Memory and time are dominated by the demag FFT on a grid padded to $2n$ per free axis. On a laptop CPU,
+$10^4$--$10^5$ cells are practical; $10^6$ cells (e.g.\ a 100\,nm cube at 1\,nm) belong on a GPU.
+
+\textbf{LLG tolerances.} \code{tol} bounds the per-step change of $\vm$ in any cell; $10^{-6}$ is fine for trajectories.
+To stop on torque, \code{tol} must sit at least 100$\times$ below \code{until\_torque}: each step's error re-excites a
+torque of a few $\times$ \code{tol}, so the threshold would otherwise never be reached. For relaxation, a large
+$\alpha$ ($\approx 1$) is fastest; it is unphysical for the path but not for the end state.
+
+\textbf{Minimiser tolerance.} \code{torque\_tol = 1e-6} (in units of $M_s$) is the tested default. Near a switching
+field, convergence slows, so leave \code{max\_iter} generous rather than loosening the tolerance.
+
+\textbf{Hysteresis steps.} Use a coarse \code{mu0\_H\_step} (about 1--5\% of the expected switching field) with a fine
+\code{refine\_to} (about $10^{-3}$\,T for hard magnets, $10^{-5}$\,T for soft films). The coarse step must divide the
+range exactly.
+
+\textbf{Thermal step \code{dt} (for \code{heun}).} It must resolve the fastest precession: about 1/20 or less of
+$2\pi/(\gamma_0 H_\mathrm{max})$, where $H_\mathrm{max}$ includes the exchange field, roughly $2A/(\mo M_s\Delta x^2)$
+per neighbour. It should also be well below a cell's free-diffusion time
+$\tau_N = (1+\alpha^2)\mo M_s V/(2\alpha\gamma_0 k_BT)$; the tests use $\tau_N/200$. Check a result by halving
+\code{dt} once. Femtosecond steps are typical.
+
+% ---------------------------------------------------------------------------------------------------------------------
+\section{Thermal runs: what to expect}
+\label{sec:thermal}
+
+Set \code{temperature} (and \code{seed}) on an \code{llg-dynamics} stage:
+\begin{lstlisting}[language=toml]
+[[stage]]
+type = "llg-dynamics"
+alpha = 0.1
+temperature = 300     # K
+seed = 1              # same card and seed: the same run, on the CPU or the GPU
+dt = 1e-14            # s, the fixed heun step; check by halving it
+duration = 1e-9
+sample_every = 1e-12
+\end{lstlisting}
+\begin{itemize}
+  \item \textbf{Reach.} Steps resolve precession on femtosecond scales, so direct runs reach nanoseconds to microseconds.
+        Thermally activated reversal over a 25\,$k_BT$ barrier (about a second) is far out of reach; use barriers of a
+        few $k_BT$.
+  \item \textbf{Cell-size dependence.} Each cell gets an independent kick, so smaller cells carry shorter-wavelength
+        fluctuations and the magnet looks ``more thermal''. No correction is applied; report the cell size with any
+        thermal result and compare at least two.
+  \item \textbf{Double counting.} Parameters measured at temperature, such as $M_s(300\,\mathrm K)$, already contain
+        the average effect of sub-cell fluctuations, and the noise adds them again. micromag does not correct for this.
+  \item \textbf{Scope.} One temperature per stage, uniform in space. \code{minimize} and \code{hysteresis} are always
+        at $T=0$. Each stage keys its noise by \code{seed} and its position in the card, so two stages with the same
+        seed draw different numbers.
+\end{itemize}
+
+% ---------------------------------------------------------------------------------------------------------------------
+\section{The results folder}
+
+\code{micromag run CARD -o DIR} writes:\\
+\begin{minipage}{\linewidth}
+\begin{lstlisting}
+DIR/
+  card.toml                  the card, copied byte for byte
+  provenance.json            versions, git state, timings, status, per-stage summaries
+  git.diff                   only if the checkout had uncommitted changes
+  stage1_llg-dynamics.csv    one table per stage: stage<k>_<type>.csv
+  trajectory.h5              magnetisation snapshots and the region map
+  trajectory.xdmf            sidecar for opening trajectory.h5 in ParaView
+\end{lstlisting}
+\end{minipage}
+
+\textbf{Stage tables.} One row per sample, flushed as written (\code{tail -f} works). Time restarts at 0 in each stage.
+\begin{itemize}
+  \item \code{llg-dynamics}: \code{t, mu0\_Hx, mu0\_Hy, mu0\_Hz, mx, my, mz, E\_exchange, E\_anisotropy, E\_zeeman,
+        E\_demag, E\_total, steps, rejected}
+  \item \code{minimize}, \code{hysteresis}: the same without \code{t}, \code{steps} and \code{rejected}, plus
+        \code{iterations}.
+\end{itemize}
+$\langle\vm\rangle$ is averaged over magnetic cells only; energies are in J, fields in T, time in s. A refined
+hysteresis stage revisits fields, and every field it computed is a row, in the order computed.
+
+\textbf{\code{trajectory.h5}} (float64, gzip-compressed):
+\code{/regions} is the \code{uint8} region map with a JSON \code{materials} attribute; \code{/stage<k>/m} holds the
+snapshots, shaped \code{(count, 3, nz, ny, nx)}, with \code{/stage<k>/t} or \code{/stage<k>/mu0\_H}; \code{/final/m}
+is the end state; \code{/failed/m} the last state of a failed stage. By default each stage saves its final snapshot;
+\code{dump\_every} or \code{dump = true} saves more. Open \code{trajectory.xdmf} in ParaView (XDMF Reader) to view
+$\vm$ and the regions over all snapshots.
+
+\textbf{\code{provenance.json}} records the status (\code{running}, \code{completed} or \code{failed}, with the error),
+timestamps, device and GPU name, package versions, the git hash and dirty flag, the initial state, each region's exact
+and painted volume, and per stage its wall time, the hysteresis summary, or the LLG method, step counts, seed and
+temperature. It is rewritten after each stage, so a killed run shows how far it got.
+
+\textbf{Failures.} A stage fails at \code{max\_duration} or \code{max\_iter}, or on a solver error. The run stops, keeps
+everything written so far, saves the last state in \code{/failed}, and exits with code 1. A bad card or a non-empty
+output folder exits with code 2 before anything is written.
+
+% ---------------------------------------------------------------------------------------------------------------------
+\section{The Python API}
+
+Everything a card does is available from Python, for scripting parameter studies or custom analysis. Arrays must be
+float64 and C-contiguous in the layout of Section 4.1; a wrong dtype or shape raises an error rather than silently
+copying.
+\begin{lstlisting}[language=Python]
+import numpy as np
+import micromag as mm
+
+g = mm.Grid(64, 64, 1, 2e-9, 2e-9, 2e-9)         # nx, ny, nz, dx, dy, dz; pbc=(Px, Py, Pz)
+s = (g.nz, g.ny, g.nx)
+Ms, A, K = np.full(s, 8e5), np.full(s, 1.3e-11), np.zeros(s)
+k = np.zeros((3, *s)); k[2] = 1
+prob = mm.Problem(g, Ms, A, K, k, (0, 0, 0), device="cpu")   # H_ext in A/m; or "cuda"
+
+m = np.zeros((3, *s)); m[0] = 1
+mm.Minimizer(prob).minimize(m, torque_tol=1e-6)   # m is updated in place
+print(prob.energies(m))                           # {"exchange": ..., "demag": ...} in J
+
+llg = mm.LLG(prob, alpha=0.02)                    # gamma, tol, max_step, method also settable
+llg.run_until(m, 1e-9)                            # advance to t = 1 ns
+
+hot = mm.LLG(prob, alpha=0.1, method="heun", dt=1e-14, temperature=300, seed=1)
+hot.run_until(m, 2e-9)
+
+mm.run("examples/sp4.toml", "runs/sp4")          # same as the command line
+\end{lstlisting}
+Note that \code{Problem} takes $\vH_\mathrm{ext}$ in A/m, while the card takes $\mo\vH$ in T. \code{Problem} also accepts
+\code{regions} (a \code{uint8} map), \code{coupling} (a $256\times256$ pair table) and \code{demag=False}.
+\code{prob.H\_ext} can be changed between calls; changing a material means building a new \code{Problem}.
+
+% ---------------------------------------------------------------------------------------------------------------------
+\section{Validation and known limits}
+\label{sec:validation}
+
+Every numerical routine is tested against an analytic result or an independent oracle (e.g.\ the Bloch-wall profile,
+Aharoni's prism factors, a direct $O(N^2)$ demag sum, the analytic macrospin, the Boltzmann distribution), and every GPU
+kernel against the CPU. The comparisons with published results:
+
+\begin{center}\small
+\begin{tabularx}{\textwidth}{@{}Y l l r@{}}
+\toprule
+Benchmark & micromag & Reference & Diff. \\
+\midrule
+$\mu$MAG SP3: flower/vortex crossover ($20^3$) & $L = 8.4551\,l_\mathrm{ex}$ & 8.47 (MagTense 8.4556) & $-0.18\%$ \\
+$\mu$MAG SP4 field 1: first $\langle m_x\rangle = 0$ & 138.6 ps & OOMMF: 138.4 ps & $+0.14\%$ \\
+$\mu$MAG SP2: $H_c/M_s$ at $d/l_\mathrm{ex}=1$ & 0.05704 & exact limit 0.05707 & $-0.05\%$ \\
+$\mu$MAG SP2: $H_c/M_s$ at $d/l_\mathrm{ex}=10$ & 0.05446 & OOMMF 1.1: 0.05454 & $-0.15\%$ \\
+$\mu$MAG SP2: $H_c/M_s$ at $d/l_\mathrm{ex}=20$ & 0.04960 & OOMMF 1.1: 0.04991 & $-0.6\%$ \\
+$\mu$MAG SP2: $H_c/M_s$ at $d/l_\mathrm{ex}=30$ & 0.04533 & OOMMF 1.1: 0.04594 & $-1.3\%$ (open) \\
+Stoner--Wohlfarth astroid, $\psi = 15$--$75^\circ$ & & analytic & $\leq 5\times10^{-4}H_K$ \\
+Periodic perpendicular film: switching at $30^\circ$ & $-0.79446$ T & SW with $H_{K,\mathrm{eff}}$: $-0.79443$ T & $2\times10^{-5}$ T \\
+40 nm Nd$_2$Fe$_{14}$B cube: switching field & 5.275 T & Fischbacher 2017: 5.29 T & $-0.3\%$ \\
+25 nm core--shell cube: $H_c$ & 2.721 T & Fischbacher 2018: 2.76 T & $-0.04$ T \\
+255 decoupled random grains: $M_r$, $H_c$ & $0.4705\,M_s$, $0.4627\,H_K$ & SW, same axes & $<10^{-7}$ \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+The SP2 case at $d/l_\mathrm{ex}=30$ is a known miss, probably due to the mesh ($0.5\,l_\mathrm{ex}$ cells against
+OOMMF's 0.60); a cell-size study is open.
+
+\textbf{Limits to keep in mind.}
+\begin{itemize}
+  \item Uniaxial anisotropy only; no DMI, magnetoelastics or cubic anisotropy.
+  \item Periodic boundaries use a finite number of copies; the result depends on $P$ and should be checked at two values.
+  \item The applied field and the temperature are uniform and constant within a stage; $\alpha$ and $\gamma$ are one
+        value per stage, not per cell.
+  \item At most 256 regions (ids 0--255), which caps a polycrystal at about 255 grains.
+  \item One GPU per run.
+  \item Thermal results depend on the cell size, with no renormalisation (Section~\ref{sec:thermal}).
+\end{itemize}
+
+\textbf{Further reading in the repository.} \code{docs/cards.md} (card keys), \code{docs/results.md} (outputs),
+\code{docs/thermal.md}, \code{docs/gpu.md}, \code{docs/verification.md}, \code{docs/architecture.md};
+\code{DECISIONS.md} for the reasoning behind every choice, and \code{BENCHMARKS.md} for the reference data and sources.
+
+\begin{thebibliography}{9}\small
+\bibitem{fischbacher2018} J.~Fischbacher \emph{et al.}, ``Micromagnetics of rare-earth efficient permanent magnets'',
+  \emph{J.\ Phys.\ D: Appl.\ Phys.}\ \textbf{51}, 193002 (2018). \href{https://doi.org/10.1088/1361-6463/aab7d1}{doi:10.1088/1361-6463/aab7d1}
+\bibitem{fischbacher2017} J.~Fischbacher \emph{et al.}, \emph{Appl.\ Phys.\ Lett.}\ \textbf{111}, 072404 (2017).
+\bibitem{newell} A.~J.~Newell, W.~Williams and D.~J.~Dunlop, \emph{J.\ Geophys.\ Res.}\ \textbf{98}, 9551 (1993).
+\bibitem{exl} L.~Exl \emph{et al.}, ``LaBonte's method revisited'', \emph{J.\ Appl.\ Phys.}\ \textbf{115}, 17D118 (2014).
+\bibitem{brown} W.~F.~Brown, ``Thermal fluctuations of a single-domain particle'', \emph{Phys.\ Rev.}\ \textbf{130}, 1677 (1963).
+\bibitem{rackauckas} C.~Rackauckas and Q.~Nie, ``Adaptive methods for stochastic differential equations via natural
+  embeddings and rejection sampling with memory'', \emph{Discrete Contin.\ Dyn.\ Syst.\ B} \textbf{22}, 2731 (2017).
+\bibitem{salmon} J.~K.~Salmon \emph{et al.}, ``Parallel random numbers: as easy as 1, 2, 3'', SC'11 (2011).
+\bibitem{mumag} $\mu$MAG standard problems, \url{https://www.ctcms.nist.gov/~rdm/mumag.org.html}.
+\end{thebibliography}
+
+\end{document}

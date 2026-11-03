@@ -34,7 +34,7 @@ float64 throughout, so restarts are exact, compressed losslessly with shuffle + 
 
 | Path | Contents |
 |---|---|
-| `/` attributes | `n`, `cell` (m), units, and the `m` layout: `m[snapshot, component, z, y, x]`, x fastest |
+| `/` attributes | `n`, `cell` (m), `pbc` (periodic copies per side), units, and the `m` layout: `m[snapshot, component, z, y, x]`, x fastest |
 | `/regions` | the region map, `uint8 (nz, ny, nx)`; attribute `materials` is JSON `{"id": "material name"}` |
 | `/stage<k>/m` | snapshots, `(count, 3, nz, ny, nx)` unit vectors; attribute `type` is the stage type |
 | `/stage<k>/t` or `/stage<k>/mu0_H` | the time (s) or field (T) of each snapshot |
@@ -71,6 +71,7 @@ state = "stage1"                    # or "final" (the default)
 | `status`, `error` | `"running"`, `"completed"` or `"failed"`, with the error message |
 | `started`, `finished` | UTC timestamps |
 | `device`, `gpu` | `"cpu"` or `"cuda"`, and the GPU name from `nvidia-smi` |
+| `pbc` | the periodic copies per side along x, y, z; `[0, 0, 0]` is a free grid |
 | `versions` | micromag, numpy, h5py and Python |
 | `git` | `{hash, dirty}` of the checkout, or `null` outside one |
 | `initial` | the uniform `m`, or the restart file, state and SHA-256 |

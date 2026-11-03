@@ -66,12 +66,12 @@ __global__ void exchange_kernel(Grid g, const double* m, const double* Ms, const
         for (size_t c = 0; c < 3; ++c) h[c] += w * (m[c * n + j] - m[c * n + i]);
     };
     if (Ms[i] != 0) {
-        if (x > 0) add(i - 1, g.dx);
-        if (x + 1 < g.nx) add(i + 1, g.dx);
-        if (y > 0) add(i - sy, g.dy);
-        if (y + 1 < g.ny) add(i + sy, g.dy);
-        if (z > 0) add(i - sz, g.dz);
-        if (z + 1 < g.nz) add(i + sz, g.dz);
+        if (x > 0) add(i - 1, g.dx); else if (g.px) add(i + (g.nx - 1), g.dx);  // a periodic axis wraps (D45)
+        if (x + 1 < g.nx) add(i + 1, g.dx); else if (g.px) add(i - (g.nx - 1), g.dx);
+        if (y > 0) add(i - sy, g.dy); else if (g.py) add(i + (g.ny - 1) * sy, g.dy);
+        if (y + 1 < g.ny) add(i + sy, g.dy); else if (g.py) add(i - (g.ny - 1) * sy, g.dy);
+        if (z > 0) add(i - sz, g.dz); else if (g.pz) add(i + (g.nz - 1) * sz, g.dz);
+        if (z + 1 < g.nz) add(i + sz, g.dz); else if (g.pz) add(i - (g.nz - 1) * sz, g.dz);
     }
     const double pre = Ms[i] != 0 ? 2 / (mu0 * Ms[i]) : 0.0;
     for (size_t c = 0; c < 3; ++c) H[c * n + i] = pre * h[c];
@@ -157,8 +157,10 @@ public:
     // The tensor is built on the CPU (D14) and transformed on the device with the same cuFFT layout as M (D25).
     // Axes of length 1 are left out of the transform, so the halved axis is the last one longer than 1.
     explicit CudaDemag(const Grid& g)
-        : g_(g), pad_{padded(g.nx), padded(g.ny), padded(g.nx) * padded(g.ny) * padded(g.nz)}, N_(demag_tensor(g)) {
-        for (size_t a : {padded(g.nz), padded(g.ny), padded(g.nx)})
+        : g_(g),
+          pad_{padded(g.nx, g.px), padded(g.ny, g.py), padded(g.nx, g.px) * padded(g.ny, g.py) * padded(g.nz, g.pz)},
+          N_(demag_tensor(g)) {
+        for (size_t a : {padded(g.nz, g.pz), padded(g.ny, g.py), padded(g.nx, g.px)})
             if (a > 1) dims_.push_back(int(a));
         if (dims_.empty()) return;
         Pc_ = pad_.P / dims_.back() * (dims_.back() / 2 + 1);

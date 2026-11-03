@@ -763,6 +763,8 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
   - The setup costs about 1 µs per offset per copy (the tensor today: 64×64×16 in 0.067 s, 32³ in 0.048 s, measured 2026-11-03). Estimates: 128×128×1 with P = 10 in x and y about 2 s; 64³ with P = 5 in all axes about 45 s, with P = 10 about 5 min. To be measured (Result); a cheaper far-copy kernel only on evidence.
   - The largest error of a periodic run is the choice of P itself: a film 10× wider than thick at P = 10 still has N_zz about 4e-3 short of 1 (estimate). The docs give measured convergence with P.
   - The CUDA backend already builds its kernel from the host `demag_tensor(g)`, so only its padding and its exchange kernel change.
+- **Correction (2026-11-03, implementation):** each copy is evaluated at |offset| and given the parity signs, as the octant mirroring does, not evaluated directly at a negative offset. Newell's cancellations (D14) make a direct evaluation at −X round differently: the window direct-sum check missed 1e-12 by a hair on the film case (1.0e-12), with individual entries off by up to 2e-11 relative. With the parity rule, every case passes, and pbc = 0 still gives the bitwise-identical tensor (sha256 of three grids unchanged).
+- **Result (2026-11-03, laptop CPU):** tensor setup 0.9 s for 128×128×1 at pbc = [10, 10, 0], 22.4 s for 64³ at [5, 5, 5], 21.3 s for 32³ at [10, 10, 10] (estimates were 2 s, 45 s, —). 64³ at [10, 10, 10] would take about 3 min. Once per run, so no cheaper far-copy kernel is needed yet.
 
 ### D46: PBC card key, Grid, outputs and docs (refines D9, D27, D28) (2026-11-03)
 - **Context:** cards must express PBC (D27), and the results must record how a run was made (D28).
@@ -787,3 +789,20 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
   - **CPU = CUDA:** PBC cases in the direct CPU-vs-GPU comparisons.
 - **Alternatives:** a cross-check against mumax3 (optional, for BENCHMARKS.md; tests 2 and 3 are already independent oracles).
 - **Consequence:** the regression test passes on a stub by design; every other new test must go red against a stub that ignores `pbc`.
+- **Correction (2026-11-03):** the regression check is not a stored hash of the tensor: CI runs on Linux and macOS, whose libm differ in the last bits. It is the shape check (only periodic axes drop their padding), the unchanged existing suite, and a one-off sha256 comparison on the laptop (D45 Correction).
+- **Result (2026-11-03, laptop CPU):**
+  - Against the stubs (Grid and card accept `pbc`, everything else free), all 21 new tests in `test_pbc.py` went red for their own reason (edge cells, the window sum, constant errors in P, a non-uniform cube field, owners across the wrap, no `pbc` in provenance, N_zz = 0.77 in the film guard). The PBC cases added to the gradient and CPU-oracle tests pass on the stub by design (symmetry), and so do the card tests.
+  - Window direct sum: all five cases within 1e-12 (FFT against a direct sum with the same tensor: 3.5e-16).
+  - Rod, 4³ tile, P = 4, 8, 16: 0.5 − N_yy = 3.85e-3, 1.09e-3, 2.92e-4, ratios 3.51 and 3.75 (the copies' far-end estimate ((2P+½)/(P+½))² gives 3.57 and 3.77); N_xx = 7.7e-3, 2.2e-3, 5.8e-4.
+  - Film, 4×4×1 tile, P = 4, 8, 16: 1 − N_zz = 0.0250, 0.0132, 0.0068, ratios 1.890 and 1.941 (the plate estimate (4P+1)/(2P+1) gives 1.889 and 1.939).
+  - Cube, 4³ at [2, 2, 2]: N = ⅓ − 8.9e-13 on each axis, spread across the tile exactly 0; the free cube's spread is 0.24 Ms.
+  - Periodic perpendicular film, 16×16×2 cells of 2 nm at [10, 10, 0], Q = 2.5: N_zz = 0.99464, N_xx = 0.00268; switching at ψ = 30°: −0.79446 T against Stoner–Wohlfarth with H_K,eff −0.79443 T (2.3e-5 T); m stays uniform before the switch. The same tile with free boundaries switches at −0.9625 T.
+  - Suites: `uv run pytest` gives 166 passed, 69 skipped (CUDA), 24 deselected in 76 s.
+  - `uv run pytest -m slow -s`: 10 passed, 14 skipped (CUDA) in 15 min. SP2 (0.05704, 0.05446), SP3 (8.4551 l_ex), SP4 (138.6 ps, RMS 0.0051, 1979 steps), the cubes (5.275 T, 2.721 T), the grain ensemble and the escape rates are unchanged.
+  - CUDA not compiled: Docker was not running. To check before the GPU run.
+- **Mutation check (2026-11-03):** each bug planted alone; the tests in `test_pbc`, `test_fields`, `test_demag`, `test_regions`, `test_card` and `test_run` run against it.
+  - The +x wrap landing one cell short (i − (n − 2)): caught by the spin spiral and both gradient tests (the operator is no longer symmetric).
+  - The copies summed over −P…P−1 on the positive side: caught by the window direct sum and the demag gradient test.
+  - No half weights at the window ends for even n: caught by the window direct sum only.
+  - Grains without the minimum image (`paint` not passing the period): caught by the periodic card test only. The `voronoi` tests call it with the period directly, so they cannot see this.
+  - Not planted: the GPU still padding a periodic axis (no GPU here); the CPU-vs-CUDA comparisons with PBC cases cover it on the next GPU run.

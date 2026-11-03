@@ -29,7 +29,8 @@ results folder: card.toml, provenance.json, stage<k>_<type>.csv, trajectory.{h5,
 - **One driver, two backends (D24).** `LLG` and `Minimizer` hold the control logic, and a `Backend` holds the materials and does the arithmetic: fields, linear combinations, reductions. The CPU backend is the original loop code and serves as the **oracle**. The CUDA backend runs the same arithmetic, one thread per entry, using cuFFT and CUB, and every kernel is tested against the CPU (D26).
 - **No global state.** Every solver object is constructed and passed in, so runs are re-entrant. This is one of the MagTense weaknesses avoided on purpose.
 - **Vacuum is Ms = 0 (D11).** Vacuum cells get H = 0 and are not exchange neighbours. Exchange between unlike cells uses the harmonic mean of A, optionally scaled per region pair (D35).
-- **Demag (D14–D16).** The Newell tensor for near cells and a Gauss-averaged dipole for far ones, mirrored from one octant, then a zero-padded real-to-complex FFT convolution: pocketfft on the CPU, cuFFT on the GPU.
+- **Boundaries (D11, D45).** Free by default. `Grid` carries the periodic copies per side; on a periodic axis the exchange neighbour wraps, the FFT is not padded, and each demag tensor entry sums the copies in a window centred on the cell.
+- **Demag (D14–D16).** The Newell tensor for near cells and a Gauss-averaged dipole for far ones, mirrored from one octant, then a real-to-complex FFT convolution, zero-padded on free axes: pocketfft on the CPU, cuFFT on the GPU.
 
 ## File map
 
@@ -60,7 +61,7 @@ The card is the main interface, and everything it does is also available from Py
 import numpy as np
 import micromag as mm
 
-g = mm.Grid(64, 64, 1, 2e-9, 2e-9, 2e-9)
+g = mm.Grid(64, 64, 1, 2e-9, 2e-9, 2e-9)               # pbc=(10, 10, 0) for a periodic film (D45)
 s = (g.nz, g.ny, g.nx)
 Ms, A, K = np.full(s, 8e5), np.full(s, 1.3e-11), np.zeros(s)
 k = np.zeros((3, *s)); k[2] = 1

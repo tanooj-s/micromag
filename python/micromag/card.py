@@ -112,6 +112,7 @@ class Card:
     n: tuple     # cells along x, y, z
     cell: tuple  # m
     demag: bool
+    pbc: tuple   # periodic copies per side along x, y, z; 0 is free (D46)
     materials: dict        # name -> Material, in card order; the first fills region 0 (D33)
     m0: np.ndarray | None  # uniform start, normalised
     file: Path | None      # or a trajectory.h5 to start from ...
@@ -431,6 +432,8 @@ def load(path):
               and all(isinstance(x, int) and not isinstance(x, bool) for x in v) else (None, "3 whole numbers ≥ 1"), REQUIRED),
         "cell": (lambda v: _vector(v, lambda a: np.all(a > 0), "3 positive numbers"), REQUIRED),
         "demag": (_bool, True),
+        "pbc": (lambda v: _vector(v, lambda a: np.all(a >= 0), "3 whole numbers ≥ 0") if isinstance(v, list)
+                and all(isinstance(x, int) and not isinstance(x, bool) for x in v) else (None, "3 whole numbers ≥ 0"), [0, 0, 0]),
     }, "[grid]", errors)
     materials = {}
     tables = raw.get("material", {})
@@ -475,5 +478,6 @@ def load(path):
     if errors:
         raise CardError(f"{path}:\n  " + "\n  ".join(errors))
     file = (path.parent / initial["file"]) if initial["file"] else None
-    return Card(path, text, device, tuple(int(x) for x in grid["n"]), tuple(float(x) for x in grid["cell"]), grid["demag"], materials,
+    return Card(path, text, device, tuple(int(x) for x in grid["n"]), tuple(float(x) for x in grid["cell"]), grid["demag"],
+                tuple(int(x) for x in grid["pbc"]), materials,
                 initial["m"], file, initial["state"] or "final", stages, regions, grains, couplings)

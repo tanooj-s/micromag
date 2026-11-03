@@ -69,28 +69,67 @@ Six far_tensor(double X, double Y, double Z, double dx, double dy, double dz) {
     return N;
 }
 
-pocketfft::shape_t pshape(const Grid& g) { return {padded(g.nz), padded(g.ny), padded(g.nx)}; }
+pocketfft::shape_t pshape(const Grid& g) { return {padded(g.nz, g.pz), padded(g.ny, g.py), padded(g.nx, g.px)}; }
+
+// One axis of the tensor (D45). Entry c of a free axis is the offset c (c < n), mirrored to 2n - c. Entry c of a periodic
+// axis (c ≤ n/2) sums every offset d ≡ c (mod n) with |d| ≤ W = Pn + n/2, the two ends at weight ½ when n is even, and is
+// mirrored to n - c. Either way the mirror of c holds the negated offsets; `none` marks an entry that is its own mirror.
+struct Axis {
+    static constexpr size_t none = ~size_t(0);
+    std::vector<std::vector<std::pair<long, double>>> offsets;  // per computed entry c: (offset in cells, weight)
+    std::vector<size_t> mirror;
+
+    Axis(size_t n, size_t P) {
+        const long N = long(n), W = long(P) * N + N / 2;
+        for (size_t c = 0; c < (P > 0 ? n / 2 + 1 : n); ++c) {
+            if (P == 0) {
+                offsets.push_back({{long(c), 1.0}});
+                mirror.push_back(c == 0 ? none : 2 * n - c);
+                continue;
+            }
+            std::vector<std::pair<long, double>> o;
+            for (long d = long(c) - (long(c) + W) / N * N; d <= W; d += N)  // the smallest d ≡ c with d ≥ -W, upwards
+                o.push_back({d, N % 2 == 0 && std::abs(d) == W ? 0.5 : 1.0});
+            offsets.push_back(o);
+            mirror.push_back(c == 0 || 2 * c == n ? none : n - c);
+        }
+    }
+};
 
 }  // namespace
 
 std::vector<double> demag_tensor(const Grid& g) {
-    const size_t Px = padded(g.nx), Py = padded(g.ny), Pz = padded(g.nz), P = Px * Py * Pz;
+    const size_t Px = padded(g.nx, g.px), Py = padded(g.ny, g.py), Pz = padded(g.nz, g.pz), P = Px * Py * Pz;
+    const Axis ax(g.nx, g.px), ay(g.ny, g.py), az(g.nz, g.pz);
     std::vector<double> N(6 * P, 0.0);
-    // Compute one octant of offsets and mirror it: diagonals are even in each coordinate,
+    // Compute one octant of entries and mirror it: diagonals are even in each coordinate,
     // Nxy is odd in x and y, Nxz in x and z, Nyz in y and z (D14).
-    for (size_t k = 0; k < g.nz; ++k)
-        for (size_t j = 0; j < g.ny; ++j)
-            for (size_t i = 0; i < g.nx; ++i) {
-                const double X = i * g.dx, Y = j * g.dy, Z = k * g.dz;
-                const Six t = i * i + j * j + k * k < 400 ? near_tensor(X, Y, Z, g.dx, g.dy, g.dz)
-                                                          : far_tensor(X, Y, Z, g.dx, g.dy, g.dz);
+    for (size_t k = 0; k < az.mirror.size(); ++k)
+        for (size_t j = 0; j < ay.mirror.size(); ++j)
+            for (size_t i = 0; i < ax.mirror.size(); ++i) {
+                Six t{};
+                bool first = true;  // assign the first term, so a single offset (a free entry) is bitwise the D14 value
+                for (const auto& [dk, wk] : az.offsets[k])
+                    for (const auto& [dj, wj] : ay.offsets[j])
+                        for (const auto& [di, wi] : ax.offsets[i]) {
+                            // Evaluate at |offset| and apply the parity, as the octant mirroring does: Newell's
+                            // cancellations make a direct evaluation at -X round differently (D14).
+                            const double X = std::abs(di) * g.dx, Y = std::abs(dj) * g.dy, Z = std::abs(dk) * g.dz;
+                            const double w = wi * wj * wk, sx = di < 0 ? -1 : 1, sy = dj < 0 ? -1 : 1, sz = dk < 0 ? -1 : 1;
+                            const Six s = di * di + dj * dj + dk * dk < 400 ? near_tensor(X, Y, Z, g.dx, g.dy, g.dz)
+                                                                            : far_tensor(X, Y, Z, g.dx, g.dy, g.dz);
+                            const double sign[6] = {1, 1, 1, sx * sy, sx * sz, sy * sz};
+                            for (int c = 0; c < 6; ++c) t[c] = first ? w * sign[c] * s[c] : t[c] + w * sign[c] * s[c];
+                            first = false;
+                        }
                 for (int sk : {1, -1}) {
-                    if (sk < 0 && k == 0) continue;
+                    if (sk < 0 && az.mirror[k] == Axis::none) continue;
                     for (int sj : {1, -1}) {
-                        if (sj < 0 && j == 0) continue;
+                        if (sj < 0 && ay.mirror[j] == Axis::none) continue;
                         for (int si : {1, -1}) {
-                            if (si < 0 && i == 0) continue;
-                            const size_t idx = ((sk > 0 ? k : Pz - k) * Py + (sj > 0 ? j : Py - j)) * Px + (si > 0 ? i : Px - i);
+                            if (si < 0 && ax.mirror[i] == Axis::none) continue;
+                            const size_t idx = ((sk > 0 ? k : az.mirror[k]) * Py + (sj > 0 ? j : ay.mirror[j])) * Px
+                                               + (si > 0 ? i : ax.mirror[i]);
                             const double sign[6] = {1, 1, 1, double(si * sj), double(si * sk), double(sj * sk)};
                             for (int c = 0; c < 6; ++c) N[c * P + idx] = sign[c] * t[c];
                         }

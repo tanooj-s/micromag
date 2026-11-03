@@ -7,10 +7,13 @@ H_EXT = np.array([1e5, -2e5, 3e5])
 C = {"exchange": 0.5, "anisotropy": 0.5, "zeeman": 1.0, "demag": 0.5}  # energy prefactor per term (D10)
 
 
-def random_problem(seed=0):
+PBC = pytest.mark.parametrize("pbc", [(0, 0, 0), (2, 1, 3)], ids=["free", "periodic"])  # D47: odd and even n wrap
+
+
+def random_problem(seed=0, pbc=(0, 0, 0)):
     """Small grid with unequal cell sizes, mixed materials and some vacuum cells."""
     rng = np.random.default_rng(seed)
-    g = mm.Grid(5, 4, 3, 2e-9, 3e-9, 4e-9)
+    g = mm.Grid(5, 4, 3, 2e-9, 3e-9, 4e-9, pbc=pbc)
     s = (g.nz, g.ny, g.nx)
     m = rng.normal(size=(3, *s))
     m /= np.linalg.norm(m, axis=0)
@@ -58,11 +61,13 @@ def test_uniform_state_energies():
     assert np.isclose(energy("zeeman", p, u), -mm.mu0 * dV * np.sum(Ms) * (u[:, 0, 0, 0] @ H_EXT), rtol=1e-12, atol=0)
 
 
+@PBC
 @pytest.mark.parametrize("term", C)
-def test_field_is_minus_energy_gradient(term, device):
+def test_field_is_minus_energy_gradient(term, device, pbc):
     # H = -1/(µ0 Ms dV) ∂E/∂m. E is quadratic (exchange, anisotropy) or linear (Zeeman) in m,
-    # so central differences are exact up to rounding. Passing also proves the exchange operator is symmetric.
-    p = random_problem()
+    # so central differences are exact up to rounding. Passing also proves the exchange operator is symmetric,
+    # across the wrap too (D47).
+    p = random_problem(pbc=pbc)
     g, m = p["grid"], p["m"]
     h = 1e-3
     grad = np.empty_like(m)
@@ -130,11 +135,12 @@ def test_binding_rejects_mismatched_arrays():
         mm.exchange_field(g, p["m"], p["Ms"], p["A"], out.astype(np.float32))
 
 
+@PBC
 @pytest.mark.parametrize("term", C)
-def test_problem_field_matches_cpu_oracle(term, device):
+def test_problem_field_matches_cpu_oracle(term, device, pbc):
     # D26: exchange and anisotropy within 1e-14·max|H| (fused multiply-adds, operation order); Zeeman bitwise (a copy);
     # demag within 1e-12 on the norm (a different FFT). On "cpu", Problem.field calls the oracle itself: bitwise.
-    p = random_problem()
+    p = random_problem(pbc=pbc)
     expected = field(term, p, p["m"])
     assert np.abs(expected).max() > 0  # an all-zero field would otherwise pass trivially
     prob = mm.Problem(p["grid"], p["Ms"], p["A"], p["K"], p["k"], H_EXT, device=device)
@@ -166,9 +172,9 @@ def test_cuda_device_needs_a_cuda_build():
 
 # ---- D35: exchange scaled per region pair; D36: the demag switch ----
 
-def coupled_problem(seed=1):
+def coupled_problem(seed=1, pbc=(0, 0, 0)):
     """random_problem plus a region map of ids 0–3 and a random symmetric pair table."""
-    p = random_problem(seed)
+    p = random_problem(seed, pbc)
     rng = np.random.default_rng(seed)
     p["regions"] = rng.integers(0, 4, p["Ms"].shape).astype(np.uint8)
     table = np.ones((256, 256))
@@ -212,8 +218,9 @@ def test_pair_scale_on_a_three_cell_chain(device):
     assert np.allclose(coupled_field(p, m, device), expected, rtol=1e-14, atol=0)
 
 
-def test_coupled_field_is_minus_energy_gradient(device):
-    p = coupled_problem()
+@PBC
+def test_coupled_field_is_minus_energy_gradient(device, pbc):
+    p = coupled_problem(pbc=pbc)
     g, m = p["grid"], p["m"]
     E = lambda m: mm.energy(g, m, p["Ms"], coupled_field(p, m, device), 0.5)
     h = 1e-3
@@ -228,9 +235,10 @@ def test_coupled_field_is_minus_energy_gradient(device):
     assert np.linalg.norm(grad - expected) <= 1e-7 * np.linalg.norm(expected)
 
 
-def test_coupled_problem_matches_cpu_oracle(device):
+@PBC
+def test_coupled_problem_matches_cpu_oracle(device, pbc):
     # D26 tolerance; on "cpu" this is Problem against the free function.
-    p = coupled_problem()
+    p = coupled_problem(pbc=pbc)
     expected = coupled_field(p, p["m"])
     assert not np.allclose(expected, field("exchange", p, p["m"]))  # guard: the table is in use
     H = np.empty_like(expected)

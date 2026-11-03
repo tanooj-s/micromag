@@ -25,6 +25,7 @@ A finite-difference micromagnetic solver, written from scratch in C++ and CUDA a
 - [A thermal field](docs/thermal.md): Brown's stochastic field, integrated by Heun or by adaptive RK23 with an exact Brownian bridge, with the same random numbers on the CPU and the GPU.
 - [A CUDA backend](#gpu) in float64, with every kernel tested against the CPU implementation.
 - [One TOML input card in, one results folder out](#input-cards): CSV tables, HDF5 states and full provenance.
+- Free or periodic boundaries on any axis, with the periodic demag summed over copies of the tile, as in mumax3.
 - [Material regions on the MuMax3 model](#materials-regions-and-grains): painted shapes, 3D Voronoi grains with per-grain easy axes, an exact grain-boundary phase, and exchange coupling per region pair.
 - [Validated](#validation) against µMAG standard problems 2, 3 and 4, published Nd₂Fe₁₄B results and the Stoner–Wohlfarth model.
 - SI units throughout, and the dimensionless Gilbert α.
@@ -65,6 +66,7 @@ card.toml  provenance.json  stage1_hysteresis.csv  trajectory.h5  trajectory.xdm
 
 ## Documentation
 
+- [User guide (PDF)](docs/guide.pdf): an 11-page introduction for first-time users: the model, the implementation choices, the simulations you can run and every card parameter
 - [Input cards](docs/cards.md): every section and key, with units and defaults
 - [The results folder](docs/results.md): the CSV columns, the HDF5 layout, provenance
 - [Running on a GPU](docs/gpu.md): CUDA builds, Colab, Slurm
@@ -178,7 +180,7 @@ The house rules, from [CLAUDE.md](CLAUDE.md):
 
 #### Is micromag ready for research use?
 
-It is validated against the standard benchmarks above, but it is a young teaching code with a deliberately small feature set. It has uniaxial anisotropy only, free boundaries only, a single GPU, a thermal field without any cell-size correction, and no DMI or magnetoelastics. For production work, use [mumax3](https://mumax.github.io), [OOMMF](https://math.nist.gov/oommf/), [MagTense](https://github.com/cmt-dtu-energy/MagTense) or [Ubermag](https://ubermag.github.io).
+It is validated against the standard benchmarks above, but it is a young teaching code with a deliberately small feature set. It has uniaxial anisotropy only, a single GPU, a thermal field without any cell-size correction, and no DMI or magnetoelastics. For production work, use [mumax3](https://mumax.github.io), [OOMMF](https://math.nist.gov/oommf/), [MagTense](https://github.com/cmt-dtu-energy/MagTense) or [Ubermag](https://ubermag.github.io).
 
 #### Which GPUs does it support?
 

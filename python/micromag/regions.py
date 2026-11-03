@@ -49,9 +49,16 @@ def _volume(r):
     return float(4 / 3 * np.pi * np.prod(p["semi_axes"]))
 
 
-def voronoi(points, seeds, chunk=8192):
+def voronoi(points, seeds, period=None, chunk=8192):
     """(owner, distance) per point: the index of its nearest seed, and its exact distance to that seed's Voronoi cell
-    boundary, min over j of (|x - s_j|² - |x - s_i|²) / (2 |s_j - s_i|) (D34); inf with a single seed."""
+    boundary, min over j of (|x - s_j|² - |x - s_i|²) / (2 |s_j - s_i|) (D34); inf with a single seed.
+    `period` (m per axis, 0 for a free axis) copies the seeds over the 3^k neighbouring boxes of the k periodic axes,
+    so a grain continues across the boundary (D45)."""
+    count = len(seeds)
+    if period is not None and any(period):
+        shifts = np.stack(np.meshgrid(*[[-1, 0, 1] if L else [0] for L in period], indexing="ij"), -1).reshape(-1, 3)
+        seeds = (seeds[None] + shifts[:, None] * np.asarray(period, float)).reshape(-1, 3)
+        chunk = max(1, chunk * count // len(seeds))  # the same memory per chunk
     owner, dist = np.empty(len(points), int), np.empty(len(points))
     sep = np.linalg.norm(seeds[:, None] - seeds[None], axis=2)  # |s_j - s_i|
     for a in range(0, len(points), chunk):
@@ -62,7 +69,7 @@ def voronoi(points, seeds, chunk=8192):
         with np.errstate(divide="ignore", invalid="ignore"):
             plane = (d2 - d2[rows, i][:, None]) / (2 * sep[i])
         plane[rows, i] = np.inf
-        owner[a:a + chunk], dist[a:a + chunk] = i, plane.min(axis=1)
+        owner[a:a + chunk], dist[a:a + chunk] = i % count, plane.min(axis=1)
     return owner, dist
 
 
@@ -125,7 +132,8 @@ def paint(card):
         rng = np.random.default_rng(g.seed)
         within = ids == g.within
         seeds = _seeds(rng, g.count, within, cell)
-        owner, dist = voronoi(np.stack([x[within], y[within], z[within]], axis=1), seeds)
+        period = [k * d if P else 0.0 for k, d, P in zip(card.n, cell, card.pbc)]
+        owner, dist = voronoi(np.stack([x[within], y[within], z[within]], axis=1), seeds, period)
         grain = (g.first_id + owner).astype(np.uint8)
         for i in range(g.first_id, g.first_id + g.count):
             material[i] = g.material
