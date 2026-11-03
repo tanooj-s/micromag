@@ -33,7 +33,7 @@ State at the end of the 2026-10-23 session: everything is committed and pushed.
 - **Iteration 7 on the CPU (2026-10-26):** all checks pass (D44 Result). One finding: the bridge matters for few-cell systems and is invisible on large grids (D44 Correction). One known gap: a wrong bridge mean coefficient (D44 Mutation check).
 - **Iteration 8, periodic boundaries (2026-11-03):** done on the CPU (D45–D47 Results). Next: compile CUDA (Docker) and run `uv run pytest -m "" -v -s` on a GPU, then the D47 GPU Result.
 - **Test counts (2026-11-03, laptop):** `uv run pytest` gives 166 passed, 69 skipped (CUDA), 24 deselected in 76 s; `-m slow` gives 10 passed, 14 skipped in 15 min, every benchmark unchanged.
-- **First thing next session:** the iteration-7 GPU run on Colab (`uv run pytest -m "" -v -s`), then its D44 and D41 Results.
+- **First thing next session (deferred by the user, 2026-11-03):** one GPU session covers iterations 7 and 8. First the CUDA compile check with Docker (below), since the iteration-8 CUDA changes (exchange wrap, unpadded periodic axes) have never been compiled. Then `uv run pytest -m "" -v -s` on a Colab T4, and the D44, D41 and D47 GPU Results.
 - **Card coverage for runs:** before a run, check the card covers it:
   - regions: named materials, shapes, Voronoi grains with a boundary phase, pair coupling (D33–D35); see `examples/grains.toml`
   - stages are `llg-dynamics`, `minimize` and `hysteresis`; `llg-dynamics` takes `temperature`, `method`, `dt` and `seed` for thermal runs (D43)
