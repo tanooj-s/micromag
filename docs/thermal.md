@@ -23,7 +23,7 @@ The adaptive RK45 used at T = 0 can't take noise: its error estimate assumes a s
 
 **Choosing `dt` for `heun`.** It must resolve the fastest precession: a small fraction (about 1/20 or less) of 2π / (γ0 H_max), where H_max includes the exchange field, roughly 2A / (µ0 Ms Δx²) per neighbour. It should also be well below a cell's free-diffusion time τ_N = (1+α²) µ0 Ms V / (2 α γ0 k_B T); the tests use τ_N / 200. Check a result by halving `dt` once.
 
-**What is within reach.** The step must resolve precession on femtosecond to picosecond scales, so direct runs reach nanoseconds to microseconds. Thermally activated reversal over a barrier of 25 k_B T, which takes about a second (the paper's coercivity criterion), is far out of reach: use barriers of a few k_B T. Energy-barrier methods (the string method) are optional roadmap iteration 8.
+**What is within reach.** The step must resolve precession on femtosecond to picosecond scales, so direct runs reach nanoseconds to microseconds. Thermally activated reversal over a barrier of 25 k_B T, which takes about a second (the paper's coercivity criterion), is far out of reach: use barriers of a few k_B T. Energy-barrier methods (the string method) are optional roadmap iteration 9.
 
 ## Caveats
 

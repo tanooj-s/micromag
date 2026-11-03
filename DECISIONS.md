@@ -733,3 +733,57 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
   - Heun drawing a fresh kick for the corrector: caught by the Heun Boltzmann and Langevin tests.
   - RK23 redrawing its noise on rejection: caught by the single-macrospin Boltzmann test and the Wiener-increment test (not by the ensemble tests; see the Correction).
   - Known gap: the bridge's conditional mean with √(h′/h) instead of h′/h. No test catches it. The two pieces still add up to the original increment, so only the noise inside a rejected interval is wrong, and the single-macrospin ⟨cos²θ⟩ moves from 0.5329 to 0.5339 (within its σ of 0.0011). Catching it would need a test hook exposing the split itself.
+
+### D45: Periodic boundary conditions: copies centred on each cell, summed directly (refines D11, D14, D15, D34) (2026-11-03)
+- **Context:** free boundaries (D11) are right for isolated particles, the only geometries validated so far. A tile meant to stand in for an extended film, a wire or bulk material (a polycrystal without the outer surface that dominates `examples/grains.toml`) needs periodic boundaries (user, 2026-11-03). The 2n padding (D15) exists precisely to remove the FFT's own periodicity, and the dipolar sum over an infinite lattice of copies is only conditionally convergent in 2D and 3D: its value depends on the shape of the macroscopic body the copies fill.
+- **Decision:**
+  - PBC are roadmap iteration 8; the stretch (string method, multi-GPU) moves to 9. Any combination of axes can be periodic.
+  - **Demag** follows mumax3's `SetPBC` and the macrogeometry of Fangohr et al. (2009): a finite number P of copies per side. A periodic axis is not padded. Each cell sees the copies in a window **centred on itself**, exactly (2P+1) tile lengths long: the tensor entry for wrapped index i sums the offsets d ≡ i (mod n) with |d| ≤ Pn + n/2, the two end layers at weight ½ when n is even (for odd n the window is Pn + (n−1)/2 and all weights are 1). The window is translation-invariant, so the sum is a convolution, and mirror-symmetric, so the octant mirroring of D14 still holds. Every copy uses the existing Newell / Gauss-averaged dipole kernels, by the same 20-cell rule (1e-6, D14).
+  - **Exchange** wraps on a periodic axis, also with `demag = false`. The harmonic mean, `[[coupling]]` pair scaling and the vacuum rule apply on the wrapped face as on any other. With n = 1 the neighbour is the cell itself and contributes nothing.
+  - **Grains** use minimum-image distances: seeds are copied over the 3^k neighbouring boxes of the k periodic axes, and the exact bisecting-plane distance (D34) runs over all copies except the owner's own image. A grain cut by the box edge continues on the other side. **Painted shapes do not wrap**; one crossing an edge is clipped, which the 5% volume warning (D33) reports.
+  - Anisotropy, Zeeman and the thermal field are local and unchanged. Energies are those of one tile.
+- **Alternatives:**
+  - An exact infinite sum (Ewald-like, Lebecki, Donahue & Gutowski 2008, as in OOMMF): clean for 1D and 2D, but in 3D it needs a sample-shape term anyway, and it is much more formula to derive and test.
+  - The copies as the central tile of an explicit (2P+1) block: not translation-invariant (a cell near the tile edge sees the copies asymmetrically), so not a convolution.
+  - A centred window without half weights: for even n, one wrapped offset class gets one copy more or less than the others.
+  - **Far copies lumped as one tile dipole** (chosen by the user in the design round, then measured and dropped by the user, 2026-11-03). The ±p symmetry cancels the first-order error, but the second-order error, about (tile/distance)², is large. Max field error against the all-pairs sum, in Ms, 4×4×4-cell tile with a strongly non-uniform m, P = 6, lumping copies with max |p| ≥ p0:
+
+    | cells | periodic axes | p0 = 3 | p0 = 4 |
+    |---|---|---|---|
+    | cubic | x | 1.3e-3 | 3.4e-4 |
+    | cubic | x, y | 3.9e-3 | 1.3e-3 |
+    | cubic | x, y, z | 4.2e-3 | 1.8e-3 |
+    | 1:1.5:2 | x | 6.6e-3 | 1.9e-3 |
+    | 1:1.5:2 | x, y | 2.1e-2 | 7.6e-3 |
+    | 1:1.5:2 | x, y, z | 5.4e-3 | 2.1e-3 |
+
+    That is as large as the finite-P error and above the ~1e-3 discretisation error accepted elsewhere, for a speed-up of about 4× (P = 5) to 27× (P = 10) in 3D.
+  - A point dipole per cell pair for far copies: about 100× cheaper there, but only O((cell/distance)²) for non-cubic cells.
+- **Consequence:**
+  - The setup costs about 1 µs per offset per copy (the tensor today: 64×64×16 in 0.067 s, 32³ in 0.048 s, measured 2026-11-03). Estimates: 128×128×1 with P = 10 in x and y about 2 s; 64³ with P = 5 in all axes about 45 s, with P = 10 about 5 min. To be measured (Result); a cheaper far-copy kernel only on evidence.
+  - The largest error of a periodic run is the choice of P itself: a film 10× wider than thick at P = 10 still has N_zz about 4e-3 short of 1 (estimate). The docs give measured convergence with P.
+  - The CUDA backend already builds its kernel from the host `demag_tensor(g)`, so only its padding and its exchange kernel change.
+
+### D46: PBC card key, Grid, outputs and docs (refines D9, D27, D28) (2026-11-03)
+- **Context:** cards must express PBC (D27), and the results must record how a run was made (D28).
+- **Decision:**
+  - `[grid] pbc = [Px, Py, Pz]`: copies per side on each axis, whole numbers ≥ 0, 0 meaning a free axis; default `[0, 0, 0]`. The same convention as mumax3's `SetPBC`, so cards translate directly.
+  - PBC live on `Grid`, which already reaches every field function and `demag_tensor` on both backends: `Grid(nx, ny, nz, dx, dy, dz, pbc=(0, 0, 0))`. `padded(n, P)` returns n on a periodic axis.
+  - `pbc` is recorded in `provenance.json` and as a `trajectory.h5` root attribute. A restart may change it, like the cell size; the restart check stays on `n`.
+  - Docs: `docs/cards.md` (the `[grid]` table and a PBC section), `docs/results.md`, `docs/architecture.md`, `docs/verification.md`, the README (Highlights, FAQ), `docs/guide.tex` and its PDF; `docs/thermal.md` now points to iteration 9.
+- **Alternatives:** `periodic = [true, true, false]` with one `images` count (can't set P per axis); PBC on `Problem` (a second object to pass down beside `Grid`).
+- **Consequence:** every existing card runs unchanged (pbc = 0), and the tensor for pbc = 0 is bitwise the same as before.
+
+### D47: Iteration-8 checks (2026-11-03)
+- **Context:** a wrap-around bug lives at the box edge, where a few cells are wrong and the averages barely move. The checks compare every cell against exact results and against independent sums.
+- **Decision:** new `tests/test_pbc.py`, every physics test on `cpu` and `cuda`:
+  - **Exchange spiral:** m = (cos kx, sin kx, 0) with whole periods along each periodic axis is an exact eigenstate of the discrete operator: H = 2A/(µ0 Ms)·2(cos kΔ − 1)/Δ² m in every cell, to 1e-12, including n = 1 and n = 2. The existing gradient tests (plain and with pair coupling) get PBC cases, which proves the wrapped operator is symmetric.
+  - **Demag window oracle:** a numpy direct sum over each cell's centred window, with the same half weights, using N(offset) from `demag_tensor` of a large free grid (validated in D17), matches the periodic FFT to 1e-12 (relative norm): random m with vacuum, odd and even n, 1, 2 and 3 periodic axes, cubic and 1:1.5:2 cells.
+  - **Analytic limits:** a square rod periodic in x has N_yy = N_zz → ½, with the error falling about 4× per doubling of P; a film periodic in x and y has N_zz → 1 and N_xx → 0, about 2× per doubling; a cubic tile periodic in all three axes gives exactly ⅓ (to 1e-6) and a field uniform across the tile. The free cube also averages ⅓, but its field is not uniform.
+  - **Regression:** with pbc = 0 the tensor is bitwise unchanged and the existing suite passes.
+  - **Grains:** periodic `voronoi` against a brute-force oracle with the seeds copied over 5^k boxes (so that 3^k is shown to suffice); two seeds in a periodic slab give exactly two boundary planes, one across the wrap; rolling the region map equals the grains of seeds shifted by the same amount (mod L).
+  - **Card and run:** validation of `pbc`, `pbc` in the provenance and the h5 attributes, a restart across different `pbc`.
+  - **Physics check:** a thin film periodic in x and y with perpendicular anisotropy (Q ≈ 2.5) has N_zz > 0.99 at P = 10, stays uniform (max |m − ⟨m⟩| < 1e-3) and switches at ψ = 30° on the Stoner–Wohlfarth astroid with H_K,eff = 2K/(µ0 Ms) − (N_zz − N_xx) Ms, within one field step. The same tile with free boundaries switches more than 10 steps away.
+  - **CPU = CUDA:** PBC cases in the direct CPU-vs-GPU comparisons.
+- **Alternatives:** a cross-check against mumax3 (optional, for BENCHMARKS.md; tests 2 and 3 are already independent oracles).
+- **Consequence:** the regression test passes on a stub by design; every other new test must go red against a stub that ignores `pbc`.
