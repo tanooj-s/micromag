@@ -212,6 +212,38 @@ A quasi-static field sweep, minimizing at each field.
 
 The stage reports `Hc_T` (the first zero of m·ĥ, linearly interpolated), `switch_T` (the midpoint of the largest jump) and `remanence` (⟨m⟩ at zero field, if the sweep passes through it). They appear on the progress line and in `provenance.json`. A full loop is two stages.
 
+### `type = "gneb"`
+
+Energy barriers: the minimum energy path between a state and its reverse at each field, by geodesic NEB with a climbing image (D48–D51). This reaches barriers far beyond what a thermal run can, such as the 25 k_BT of a coercivity at one second.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `direction` | required | field direction, normalised |
+| `mu0_H` | required | list of field values along `direction` (T), one path each, in order |
+| `images` | `20` | images on the path, counting both ends; at least 3 |
+| `temperature` | `300` | temperature (K), which sets k_BT in the summary |
+| `torque_tol` | `1e-4` | stop when max \|force\| / Ms is below this on every image; also used to find the two end states |
+| `max_iter` | `100000` | give up after this many iterations (the stage fails) |
+| `seed` | `0` | seeds the small noise on the first path |
+
+At each field the stage minimizes the current m as the start state and −m as the reversed state, then finds the path between them. It leaves m at the last field's start state, so list the fields in the order the sweep should follow.
+
+The stage reports `barrier_J` and `barrier_kT` per field, and `Hc_T`, the field where the barrier crosses 25 k_BT, linearly interpolated, or `null` if no two neighbouring fields straddle it.
+
+- **First path:** each cell turns along a great circle, with 1e-2 rad of noise, since a perfectly uniform path can't leave itself.
+- **Long slopes:** while the path's energy range exceeds 10 barriers, its far end moves in to the first image lower than the start, so a saved path can end just past the saddle rather than at the reversed state. A higher pass after a dip below the start would be cut off.
+- **Check the saddle:** a run can converge to a higher saddle than the lowest one. Re-run with another `seed` and keep the lowest barrier, and look at the top image in `trajectory.h5`: a uniform state on a large particle means the path stayed on coherent rotation.
+- **Flat saddles:** at zero field a wall in a long wire has the same energy anywhere, so there is no single saddle and convergence is poor. Run at a small field.
+- **Convergence** can depend on the mesh: a 15³ cube of 2.67 nm cells often failed within 2000 iterations where 8³, 12³ and 30³ converged (D49).
+
+```toml
+[[stage]]
+type = "gneb"
+direction = [0.01745240643728351, 0.0, 0.9998476951563913]
+mu0_H = [-3.7, -3.94, -5.2]
+images = 10
+```
+
 ### `type = "llg-dynamics"`
 
 Time integration of the Landau–Lifshitz–Gilbert equation: by default an adaptive Dormand–Prince RK45, and at T > 0 with Brown's thermal field (see [Thermal runs](#thermal-runs)).

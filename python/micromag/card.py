@@ -62,6 +62,18 @@ class Hysteresis:
 
 
 @dataclass
+class GNEB:
+    direction: np.ndarray  # unit vector
+    mu0_H: list            # T along direction, one path each (D50)
+    images: int            # counting both ends
+    temperature: float     # K: sets k_BT in the summary
+    torque_tol: float
+    max_iter: int
+    seed: int              # keys the first path's noise (D48 Correction)
+    type: str = "gneb"
+
+
+@dataclass
 class Material:
     Ms: float  # A/m; 0 is vacuum (D11)
     A: float   # J/m
@@ -188,6 +200,12 @@ def _table(raw, spec, where, errors):
     return out
 
 
+def _fields(v):
+    if isinstance(v, list) and v and all(_number(x)[1] is None for x in v):
+        return [float(x) for x in v], None
+    return None, "a list of numbers, at least one"
+
+
 ZERO = np.zeros(3)
 METHODS = ("rk45", "heun", "rk23")
 STAGES = {
@@ -227,6 +245,16 @@ STAGES = {
         "refine_to": (_positive, None),
         "refine_jump": (_positive, 0.1),
     },
+    "gneb": {
+        "type": (_string, REQUIRED),
+        "direction": (_direction, REQUIRED),
+        "mu0_H": (_fields, REQUIRED),
+        "images": (lambda v: (v, None) if _count(v)[1] is None and v >= 3 else (None, "a whole number ≥ 3"), 20),
+        "temperature": (_positive, 300.0),
+        "torque_tol": (_positive, 1e-4),
+        "max_iter": (_count, 100_000),
+        "seed": (lambda v: _seed(v), 0),
+    },
 }
 
 
@@ -242,6 +270,9 @@ def _stage(raw, where, errors):
     where = f"{where} ({kind})"
     if kind == "minimize":
         return Minimize(v["mu0_H"], v["torque_tol"], v["max_iter"])
+    if kind == "gneb":
+        v.pop("type")
+        return GNEB(**v)
     if kind == "hysteresis":
         span = abs(v["mu0_H_to"] - v["mu0_H_from"]) / v["mu0_H_step"]
         if abs(span - round(span)) > 1e-9 * max(1.0, span):

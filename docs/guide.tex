@@ -1,4 +1,4 @@
-% micromag user guide. Build: latexmk -pdf -outdir=<tmp> docs/guide.tex, then copy guide.pdf into docs/.
+% micromag user guide. Build from docs/: latexmk -pdf -outdir=<tmp> guide.tex, then copy guide.pdf here.
 % Keep it in step with docs/cards.md and docs/results.md: a changed card key or output changes this file too.
 \documentclass[10pt,a4paper]{article}
 \usepackage[T1]{fontenc}
@@ -257,6 +257,17 @@ $\vm\cdot\hat{\mathbf{h}}=0$ or makes $\langle\vm\rangle$ jump is undone and hal
 \code{refine\_to} \dec{D31}. A loop then costs about 45 field steps instead of about 600, with the switch still resolved
 finely.
 
+\subsection{Energy barriers}
+A \code{gneb} stage finds the minimum energy path between a state and its reverse, by geodesic NEB with a climbing image
+(Bessarab \emph{et al.}\ 2015) \dec{D48}. A chain of images feels the true force across the path and a spring along it;
+the highest image climbs to the saddle, so the barrier needs no interpolation. Distances are Ms-weighted rms great-circle
+angles. The first path is a great circle with $10^{-2}$ rad of noise per cell, since a perfectly uniform path can't
+leave itself. L-BFGS moves the whole chain with no line search, as the forces are not the gradient of any energy
+(Ivanov \emph{et al.}\ 2020) \dec{D49}. Each step rotates the cells, and no cell may turn more than 0.1 rad: an rms cap
+lets a small nucleus turn as far as it likes. While the path's energy range exceeds 10 barriers, its far end moves in to
+the first image lower than the start, because a pass of 25 $k_BT$ on a slope of $10^5$ $k_BT$ would fit between two
+images.
+
 \subsection{Backends}
 The drivers (step control, BB steps, refinement) are written once. The per-cell arithmetic sits behind a small backend
 interface with two implementations: the CPU backend, which is the reference ``oracle'', and the CUDA backend, one thread
@@ -291,6 +302,8 @@ Microstructure effects & \code{hysteresis} + \code{[grains]}, \code{[[region]]},
   phases, soft shells, weak interfaces. Example: \code{grains.toml}. \\
 Thermal fluctuations, superparamagnetism & \code{llg-dynamics} with \code{temperature} & \code{heun} or \code{rk23};
   noisy time series of $\langle\vm\rangle$. Barriers of a few $k_BT$ only (Section~\ref{sec:thermal}). \\
+Energy barriers, thermal coercivity & \code{gneb} & The barrier against field, and where it crosses 25 $k_BT$. Reaches
+  barriers no thermal run can. Check with a second \code{seed}. \\
 Bulk or extended material & \code{[grid] pbc = [P, P, P]} & A periodic tile without an artificial outer surface;
   check the result at two values of $P$. \\
 Continue from an earlier result & \code{[initial] file = ...} & Restart from any saved state, even on a different cell
@@ -505,6 +518,26 @@ Key & Default & Meaning \\
 The stage reports \code{Hc\_T}, the first zero of $\vm\cdot\hat{\mathbf h}$ (linearly interpolated); \code{switch\_T},
 the midpoint of the largest jump; and \code{remanence}, $\langle\vm\rangle$ at zero field if the sweep passes through it.
 
+\subsection{\code{[[stage]]}, \code{type = "gneb"}}
+\begin{tabularx}{\textwidth}{@{}l l Y@{}}
+\toprule
+Key & Default & Meaning \\
+\midrule
+\code{direction} & req. & field direction, normalised \\
+\code{mu0\_H} & req. & list of field values along \code{direction} (T), one path each, in order \\
+\code{images} & 20 & images on the path, counting both ends; at least 3 \\
+\code{temperature} & 300 & temperature (K), which sets $k_BT$ in the summary \\
+\code{torque\_tol} & \code{1e-4} & stop when $\max|\text{force}|/M_s$ is below this on every image \\
+\code{max\_iter} & \code{100000} & give up after this many iterations (the stage fails) \\
+\code{seed} & 0 & seeds the small noise on the first path \\
+\bottomrule
+\end{tabularx}
+
+At each field the stage minimises the current $\vm$ and $-\vm$ as the two end states, then finds the path. It leaves
+$\vm$ at the last field's start state. It reports \code{barrier\_J} and \code{barrier\_kT} per field, and \code{Hc\_T},
+where the barrier crosses 25 $k_BT$ (linearly interpolated), or \code{null}. A run can converge to a higher saddle than
+the lowest, so re-run with another \code{seed} and keep the lowest. A saved path may end just past the saddle.
+
 \subsection{\code{[[stage]]}, \code{type = "llg-dynamics"}}
 \begin{tabularx}{\textwidth}{@{}l l Y@{}}
 \toprule
@@ -614,6 +647,7 @@ DIR/
         E\_demag, E\_total, steps, rejected}
   \item \code{minimize}, \code{hysteresis}: the same without \code{t}, \code{steps} and \code{rejected}, plus
         \code{iterations}.
+  \item \code{gneb}: \code{mu0\_Hx, mu0\_Hy, mu0\_Hz, image, s, E\_total, climbing}, one row per image per field.
 \end{itemize}
 $\langle\vm\rangle$ is averaged over magnetic cells only; energies are in J, fields in T, time in s. A refined
 hysteresis stage revisits fields, and every field it computed is a row, in the order computed.
@@ -622,12 +656,12 @@ hysteresis stage revisits fields, and every field it computed is a row, in the o
 \code{/regions} is the \code{uint8} region map with a JSON \code{materials} attribute; \code{/stage<k>/m} holds the
 snapshots, shaped \code{(count, 3, nz, ny, nx)}, with \code{/stage<k>/t} or \code{/stage<k>/mu0\_H}; \code{/final/m}
 is the end state; \code{/failed/m} the last state of a failed stage. By default each stage saves its final snapshot;
-\code{dump\_every} or \code{dump = true} saves more. Open \code{trajectory.xdmf} in ParaView (XDMF Reader) to view
+\code{dump\_every} or \code{dump = true} saves more; a \code{gneb} stage saves every image of every field. Open \code{trajectory.xdmf} in ParaView (XDMF Reader) to view
 $\vm$ and the regions over all snapshots.
 
 \textbf{\code{provenance.json}} records the status (\code{running}, \code{completed} or \code{failed}, with the error),
 timestamps, device and GPU name, package versions, the git hash and dirty flag, the initial state, each region's exact
-and painted volume, and per stage its wall time, the hysteresis summary, or the LLG method, step counts, seed and
+and painted volume, and per stage its wall time, the hysteresis or \code{gneb} summary, or the LLG method, step counts, seed and
 temperature. It is rewritten after each stage, so a killed run shows how far it got.
 
 \textbf{Failures.} A stage fails at \code{max\_duration} or \code{max\_iter}, or on a solver error. The run stops, keeps
@@ -688,6 +722,7 @@ $\mu$MAG SP2: $H_c/M_s$ at $d/l_\mathrm{ex}=30$ & 0.04533 & OOMMF 1.1: 0.04594 &
 Stoner--Wohlfarth astroid, $\psi = 15$--$75^\circ$ & & analytic & $\leq 5\times10^{-4}H_K$ \\
 Periodic perpendicular film: switching at $30^\circ$ & $-0.79446$ T & SW with $H_{K,\mathrm{eff}}$: $-0.79443$ T & $2\times10^{-5}$ T \\
 40 nm Nd$_2$Fe$_{14}$B cube: switching field & 5.275 T & Fischbacher 2017: 5.29 T & $-0.3\%$ \\
+40 nm cube: 25 $k_BT$ crossing at 300 K & 3.841 T & Fischbacher 2017: 3.94 T & $-2.5\%$ \\
 25 nm core--shell cube: $H_c$ & 2.721 T & Fischbacher 2018: 2.76 T & $-0.04$ T \\
 255 decoupled random grains: $M_r$, $H_c$ & $0.4705\,M_s$, $0.4627\,H_K$ & SW, same axes & $<10^{-7}$ \\
 \bottomrule

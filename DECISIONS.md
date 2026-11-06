@@ -824,6 +824,9 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
 - **Consequence:**
   - GNEB descends locally, so a coherent great-circle start may stay on the coherent route. The two are far apart on the cube: KV(1 − h)² ≈ 11,000 k_BT at 3.94 T (estimate) against 25 k_BT, and a coherent barrier vanishes near 6.09 T, not 5.275 T. The D51 self-consistency check catches this.
   - GNEB does one field evaluation per image per iteration. Per image on the 30³ cube: 10 ms field, 10 ms energy, 1.3 ms numpy bookkeeping (laptop CPU). On a GPU the host work may dominate; to be measured.
+- **Correction (2026-11-06, measured on the wire):** a plain great-circle start can't leave itself. Every cell of a uniform image feels the same force, so on a wire with no demag the coherent path is an exact path through a saddle: 0 iterations, barrier 4.24 walls (KV). The user chose noise on the first path's inner images: 1e-2 rad per cell, fixed in the code, keyed by a card `seed`. On the wire, 1e-6 rad stays coherent, 1e-3 and 1e-2 find the wall in 300–600 iterations, and 1e-1 finds it with 17–95 resets. Seeding from `llg-dynamics` can't replace this on the wire: LLG keeps a uniform state uniform too.
+- **Correction (2026-11-06, measured on the cube):** a full path can't resolve the cube's barrier. At 3.94 T the path falls about 156,000 k_BT (estimate), so a 25 k_BT pass fits between images 0 and 1. With 20 images and 1500 iterations the largest force stayed at 22–25 against a tolerance of 1e-4, the top flickering between the start and image 1 (133 k_BT, with a real nucleus). The spring rule made it worse, since κ scales with the whole energy range. The user chose truncation: every 100 iterations, and on reaching 10× `torque_tol`, while the energy range exceeds 10 barriers, the far end moves to the first image lower than the start, and the images are re-spaced along the path. (First written as the first such image past the top. A macrospin at h = 0.9 then kept a chain that crossed its pass between images 0 and 1, fell to −z and climbed back up to the far side of the saddle ring. The first lower image always keeps the pass nearest the start. Its limit: a higher pass after a dip below the start would be cut off, so truncation applies only while the energy range exceeds 10 barriers.) The check also runs after the climbing image has started, and a truncation turns it off again until the shorter path settles. The ends need not be minima, since the climbing image still finds the saddle, and the energy range then falls to about the barrier, which also fixes κ. Both the plain and the noisy cube left the coherent route within about 100 iterations: the corners break the symmetry there.
+- **Correction (2026-11-06):** E comes from the field already evaluated, E = −½ µ0 dV Σ Ms m·(H + H_ext), since every term but Zeeman is quadratic in m (D10). A step costs one field evaluation per image, not two.
 
 ### D49: L-BFGS over the whole chain (2026-11-05)
 - **Context:** GNEB forces depend on neighbouring images and are not the gradient of any energy, so `Minimizer` can't drive them. The user chose L-BFGS over velocity projection (2026-11-05), following Ivanov et al., J. Phys.: Condens. Matter 32, 345901 (2020), arXiv:2001.10372.
@@ -836,17 +839,31 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
   - The rotation cap and history length are constants in the code, measured on the wire test (Result).
 - **Alternatives:** velocity projection (GNEB's appendix; few lines, but slower by up to 8× in the paper's atomistic cases); a fixed reference frame with re-basing (closer to full OSO, more code); both optimisers with an automatic fallback (a second implementation before any failure).
 - **Consequence:** the paper describes no preconditioner, and our exchange term is stiff, so iteration counts on a 30³ cube are unknown. Repeated resets or no convergence on the wire: stop and show the data.
+- **Correction (2026-11-06, measured; user):** the cap is on any one cell's rotation, 0.1 rad, not on the rms rotation. An rms cap averages over every cell of the chain, so a nucleus of a few cells can turn as far as it likes and the path is kicked out of its pass. Fast check: the cube at 3.94 T, 10 images, `torque_tol` = 1e-3, three seeds, within 1500 iterations. Changing one thing at a time, on 8³ and 12³: the rms cap 0 of 3 and 0 of 3; the per-cell cap 3 of 3 and 3 of 3; rejecting steps that double the force 2 and 1; a central tangent 0 and 1; truncating every 500 iterations 1 and 0; freezing κ between truncations 0 and 0. L-BFGS itself was healthy: 1–3% of its pairs were skipped. On the 30³ cube the rms cap was still bouncing between 280 and 3,600 k_BT after 4000 iterations (45 min, 20 images); the per-cell cap converges to 22.478 k_BT in 788 and 676 iterations (208 s and 181 s, 10 images, seeds 0 and 1, `torque_tol` = 1e-3). Seeds can find different saddles: one 8³ seed gave 33.09 k_BT against 25.76, so a run should try several and take the lowest.
+- **Correction (2026-11-06, measured; user):** the history length is 15. It changes convergence, not the barrier: every converged run on a mesh agreed. Iterations on the 30³ cube at `torque_tol` = 1e-4, 10 images, for history 10, 15 and 30:
+
+  | µ0H, seed | 10 | 15 | 30 |
+  |---|---|---|---|
+  | 3.7 T, 1 | 2544 | 617 | 905 |
+  | 3.94 T, 0 | 788 | 695 | 704 |
+  | 5.2 T, 0 | 2069 | 1296 | failed at 4000 |
+  | 5.2 T, 1 | 3025 | 1389 | 2209 |
+
+  Longer memory may hurt because older pairs describe a landscape the path has left (a guess). Memory is not the limit: 0.35 GB at history 15 for 30³ cells and 20 images, about double while in use (estimate).
+- **Known limit:** the 15³ cube at 3.94 T, a coarser mesh than the target, converged within 2000 iterations for only 1 of 3 seeds at history 15 (0 at 10, 2 at 30), and we don't know why. A preconditioner for the exchange term is the next thing to try if a mesh needs it.
 
 ### D50: The `gneb` stage, outputs and convergence (refines D27, D28) (2026-11-05)
 - **Context:** cards must express a barrier calculation (D27), and the results folder must hold it (D28).
 - **Decision:**
-  - One stage, `type = "gneb"`, with keys `mu0_H` (a list of field values along `direction`, T), `direction`, `images` (default 20, counting both ends), `temperature` (default 300 K), `torque_tol` (default 1e-6), `max_iter` (default 100000).
+  - One stage, `type = "gneb"`, with keys `mu0_H` (a list of field values along `direction`, T), `direction`, `images` (default 20, counting both ends), `temperature` (default 300 K), `torque_tol` (default 1e-4; see the Correction), `max_iter` (default 100000).
   - At each field the stage minimizes the start state from the current m and the reversed state from −m, then runs the path. It leaves m at the last field's start state.
   - Convergence: the largest force on any image, as max |m × H|/Ms, below `torque_tol`. The climbing image starts at 10× `torque_tol`.
   - `stage<k>_gneb.csv`: one row per image per field (field, image, arc length, energy, climbing flag). `trajectory.h5`: every field's path in the stage's `m` stack, with its field in `mu0_H`.
   - Summary in provenance: the barrier per field in J and k_BT, and `Hc_T`, the field where the barrier crosses 25 k_BT, interpolated linearly in the field.
 - **Alternatives:** one stage per field (long cards; the crossing would need a separate step).
 - **Consequence:** the `failed` state of a stage holds m, not the path; a path is written only once converged.
+- **Correction (2026-11-06; user):** `torque_tol` defaults to 1e-4, not 1e-6. Every cube result was measured there, and the 3.94 T barrier matched to three decimals between 1e-3 and 1e-4; 1e-6 is untested on the cube.
+- **Correction (2026-11-06):** a `seed` key (default 0) keys the first path's noise (D48 Correction) and is recorded in provenance; re-running with another seed is the cheap check for a wrong saddle. A truncated path ends just past the saddle, not at the reversed state.
 
 ### D51: Iteration-9 checks (2026-11-05)
 - **Context:** a path method can converge to a wrong path and still look fine, so each check compares against something independent of it.
@@ -855,6 +872,21 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
   - **Wire with free ends, demag off:** the saddle is one domain wall, E_B = 4√(AK)·S, with the error falling about 4× per halving of dx (D13). Its great-circle start is coherent, so this also measures the wrong-path risk.
   - **Path properties:** |m| = 1, end states unchanged, force below tolerance on every image, even spacing, the barrier unchanged when `images` doubles; distance and tangent on known rotations.
   - **Card and outputs:** validation, the CSV, the h5 stack, the summary.
-  - **Physics check (`-m slow`):** the 30³ cube of D32, field 1° off z, 3–4 fields around 3.94 T and one near 5.275 T. The 25 k_BT crossing within 3% of 3.94 T (D32's band), and the barrier going to zero at our own static field of 5.275 T (the paper's self-consistency argument).
+  - **Physics check (`-m slow`):** the 30³ cube of D32, field 1° off z, at 3.7, 3.94 and 5.2 T (user, 2026-11-06), 10 images, seed 0: the fewest fields for both checks. The 25 k_BT crossing within 3% of 3.94 T (D32's band), and the barrier at 5.2 T above 0 and below 1 k_BT, a robust stand-in for reaching zero at our static 5.275 T (the paper's self-consistency argument).
 - **Alternatives:** a 1% band on the cube (finite elements at 1.5 nm against our 1.33 nm cubes may differ by more, for reasons unrelated to GNEB); an escape-rate cross-check against iteration 7 (the macrospin's closed form already covers it).
 - **Consequence:** stop and show the data if the wire or cube finds the coherent path, or if too few images land near the cube's saddle (then choose seeding, energy-weighted springs or truncation).
+- **Correction (2026-11-06, measured):** the wire check runs at h = 0.1, not at H = 0. At zero field a wall has the same energy anywhere, so there is a plateau and no single saddle: the climbing image hops along it (at `torque_tol` = 1e-6: 2 of 3 seeds converged at dx = 4 nm, with 277–581 resets, and 0 of 3 at dx = 8 nm). At h = 0.1, all 6 runs converged in 538–1592 iterations with 4–21 resets, and seeds agree to six digits, so the difficulty was the plateau, not L-BFGS. The check stays analytic: a wall entering a free end against h H_K has E_B = 2√(AK)·S·[√(2(2 − a)) − a ln((√2 + √(2 − a))/√a)], a = 2h, which is 4√(AK)·S at h = 0.
+- **Result (2026-11-06, laptop CPU):**
+  - Macrospin: exact to rounding on the axis at h = 0–0.9 (the h = 0.9 case by truncation, with a slope 360× the barrier), and within 1e-6 of a 1D scan at a tilted field.
+  - Wire, h = 0.1: 0.7642 of 4√(AK)·S at dx = 4 nm and 0.7559 at 8 nm, against the closed form's 0.7668: errors of −0.35% and −1.4%, about 4× per halving.
+  - Cube, 30³ cells, 1° off z, 10 images, through a card: barriers 28.604, 22.478 and 0.703 k_BT at 3.7, 3.94 and 5.2 T. The 25 k_BT crossing is at 3.841 T, −2.5% from the published 3.94 T, inside the 3% band. 4.2 T gave 16.877 k_BT. Extrapolating 4.2 and 5.2 T to zero gives 5.24–5.34 T depending on the assumed exponent, which brackets our static 5.275 T. Seeds 0 and 1 agree to three decimals at all four fields. The top image is a corner nucleus: at 3.94 T, mean mz +0.996 with a cell at −0.74.
+  - Cost: 2429 iterations and 684 s for the stage's three fields, while other jobs shared the laptop.
+  - Suites: `uv run pytest` gives 203 passed, 88 skipped, 26 deselected, 1 warning in 90.55s (0:01:30); `uv run pytest -m slow -s` gives 11 passed, 15 skipped (CUDA) in 27 min, every earlier benchmark unchanged.
+  - CUDA: not run. GNEB adds no C++, and reaches the GPU through `Problem`; the deferred GPU session covers it. The host-work question in D48 stays open until then.
+- **Mutation check (2026-11-06):** each bug planted alone, every fast `test_gneb.py` case run against it with a 120 s limit (a hung case counts as caught).
+  - The upwind tangent flipped: caught by 10 tests, among them the macrospin barriers, the path properties and the three wire tests (hung).
+  - The spring's sign flipped: caught by 15 tests, among them the path properties, the image-count test and the card tests.
+  - The climbing image not inverted: caught by 10 tests, among them the macrospin barriers and the stage tests.
+  - The rms cap back: caught by the small-nucleus test only, as designed.
+  - No noise on the first path: caught by the three wire tests and the macrospin at h = 0.
+  - Known gap: L-BFGS history not projected onto the current tangent planes. No test catches it, since a step's rotation is capped and the stored vectors stay nearly tangent. It would show as slower convergence, not as a wrong barrier.

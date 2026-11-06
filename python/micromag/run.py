@@ -22,8 +22,9 @@ from pathlib import Path
 import h5py
 import numpy as np
 
-from . import LLG, Grid, Minimizer, Problem, mu0
-from .card import CardError, Hysteresis, LLGDynamics, Minimize, load
+from . import LLG, Grid, Minimizer, Problem, kB, mu0
+from .card import GNEB, CardError, Hysteresis, LLGDynamics, Minimize, load
+from .gneb import gneb
 from .regions import paint
 
 ENERGIES = ("exchange", "anisotropy", "zeeman", "demag")
@@ -33,6 +34,7 @@ COLUMNS = {
     "minimize": ["mu0_Hx", "mu0_Hy", "mu0_Hz", "mx", "my", "mz", *(f"E_{e}" for e in ENERGIES), "E_total", "iterations"],
 }
 COLUMNS["hysteresis"] = COLUMNS["minimize"]
+COLUMNS["gneb"] = ["mu0_Hx", "mu0_Hy", "mu0_Hz", "image", "s", "E_total", "climbing"]
 
 
 def git_state(path):
@@ -214,7 +216,8 @@ def run(card, out, device=None):
 
     nx, ny, nz = card.n
     p = paint(card)
-    prob = Problem(Grid(nx, ny, nz, *card.cell, pbc=card.pbc), p.Ms, p.A, p.K, p.axis, (0, 0, 0), device=device,
+    grid = Grid(nx, ny, nz, *card.cell, pbc=card.pbc)
+    prob = Problem(grid, p.Ms, p.A, p.K, p.axis, (0, 0, 0), device=device,
                    regions=p.regions if p.coupling is not None else None, coupling=p.coupling, demag=card.demag)
     magnetic = prob.Ms > 0
 
@@ -257,7 +260,7 @@ def run(card, out, device=None):
             macro = Macrostate(out / f"stage{k}_{stage.type}.csv", COLUMNS[stage.type])
             group = micro.stage(k, stage.type)
             try:
-                summary, extra = _run_stage(stage, k, prob, m, magnetic, measure, macro, micro, group)
+                summary, extra = _run_stage(stage, k, prob, grid, m, magnetic, measure, macro, micro, group)
             except Exception as e:
                 micro.single("failed", m)
                 prov.update(status="failed", error=f"stage {k} ({stage.type}): {e}", finished=_now())
@@ -278,10 +281,12 @@ def run(card, out, device=None):
     return out
 
 
-def _run_stage(stage, k, prob, m, magnetic, measure, macro, micro, group):
+def _run_stage(stage, k, prob, grid, m, magnetic, measure, macro, micro, group):
     """Runs one stage on m in place, writing its rows and snapshots. Returns the progress-line summary."""
     if isinstance(stage, Hysteresis):
         return _hysteresis(stage, prob, m, magnetic, measure, macro, micro, group)
+    if isinstance(stage, GNEB):
+        return _gneb(stage, prob, grid, m, macro, micro, group)
 
     prob.H_ext = tuple(stage.mu0_H / mu0)  # stage-local: every stage sets its own field, zero by default (D27)
     field = f"µ0H = {stage.mu0_H.tolist()} T"
@@ -367,6 +372,34 @@ def _hysteresis(stage, prob, m, magnetic, measure, macro, micro, group):
     fmt = lambda v: "none" if v is None else f"{v:.4g} T"
     return (f"{len(rows)} fields, µ0H {stage.mu0_H_from:g} → {stage.mu0_H_to:g} T along {np.round(h, 4).tolist()}, "
             f"{iterations} iterations; Hc {fmt(summary['Hc_T'])}, switching {fmt(summary['switch_T'])}"), {"summary": summary}
+
+
+def _gneb(stage, prob, grid, m, macro, micro, group):
+    """One path per field (D50): the start state from m, the reversed state from -m, then GNEB between them. m is left
+    at the last field's start state. The summary's Hc_T is where the barrier crosses 25 k_BT, linear in the field."""
+    mn = Minimizer(prob)
+    barriers, iterations = [], 0
+    for b in stage.mu0_H:
+        H = b * stage.direction
+        prob.H_ext = tuple(H / mu0)
+        iterations += mn.minimize(m, stage.torque_tol, stage.max_iter)
+        end = -m
+        iterations += mn.minimize(end, stage.torque_tol, stage.max_iter)
+        path = gneb(prob, grid, m, end, stage.images, stage.torque_tol, stage.max_iter, stage.seed)
+        iterations += path.iterations
+        barriers.append(path.barrier)
+        for i, state in enumerate(path.m):
+            macro.row([*H, i, path.s[i], path.energy[i], int(i == path.climbing)])
+            micro.append(group, state, H)
+    kT = kB * stage.temperature
+    crossing = None
+    for (b0, e0), (b1, e1) in zip(zip(stage.mu0_H, barriers), zip(stage.mu0_H[1:], barriers[1:])):
+        if (e0 - 25 * kT) * (e1 - 25 * kT) <= 0 and e0 != e1:
+            crossing = b0 + (b1 - b0) * (e0 - 25 * kT) / (e0 - e1)
+            break
+    summary = {"mu0_H_T": stage.mu0_H, "barrier_J": barriers, "barrier_kT": [e / kT for e in barriers], "Hc_T": crossing}
+    return (f"{len(barriers)} fields, {stage.images} images, {iterations} iterations; barrier "
+            f"{barriers[-1] / kT:.4g} k_BT at {stage.mu0_H[-1]:g} T"), {"seed": stage.seed, "summary": summary}
 
 
 def main(argv=None):

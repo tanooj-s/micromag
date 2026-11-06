@@ -81,6 +81,9 @@ Source: https://www.ctcms.nist.gov/~rdm/std2/spec2.html and `results.html` (fetc
   - mesh dependence: the 4 nm mesh sits up to 0.13 T higher, and the curve falls by about 0.002 T per nm.
 - **Ours (iteration 6b, field 1° off z, the same on CPU and GPU):** the pure 40 nm cube (cells of 1.33 nm) switches at 5.275 T (−0.3%); the 25 nm core–shell cube (1 nm cells) has H_c = 2.721 T (Fig. 8a: 2.76 T); the 50 nm one (GPU only) 2.675 T (Fig. 8a: 2.71 T).
 
+- **Thermal coercivity of the pure 40 nm cube** (the same paper; the review's Fig. 7): µ₀H_c = 3.94 T where the energy barrier reaches 25 k_BT at 300 K, found by a string method with an energy-weighted distance and a truncated path, on finite elements at 1.5 nm.
+- **Ours (iteration 9, GNEB with a climbing image, cells of 1.33 nm, field 1° off z, CPU):** barriers of 28.604, 22.478, 16.877 and 0.703 k_BT at 3.7, 3.94, 4.2 and 5.2 T; 25 k_BT at 3.841 T (−2.5%), interpolated between 3.7 and 3.94 T. The barrier heads to zero at our static 5.275 T.
+
 ### Stoner–Wohlfarth ensemble of randomly oriented particles
 - **Stoner & Wohlfarth (1948)**, non-interacting uniaxial particles with isotropic easy axes: remanence M_r = 0.5 M_s and coercivity H_c = 0.479 H_K (H_K = 2K/(µ₀M_s)).
 - **Ours (iteration 6c, CPU):** 255 decoupled Voronoi grains without demag give M_r = 0.4705 M_s and H_c = 0.4627 H_K. Both are within 3σ of the isotropic values for this finite draw of axes, and both agree with the per-axis oracle to 10⁻⁷ (D37).

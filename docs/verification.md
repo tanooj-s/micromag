@@ -24,6 +24,7 @@ Physics tests take a `device` fixture, so each one runs on `cpu` and, on a CUDA 
 | `test_regions.py` | shapes, Voronoi grains, the boundary phase, the coupling table, the Stoner–Wohlfarth ensemble |
 | `test_pbc.py` | periodic boundaries: wrapped exchange exact on a spin spiral; the periodic FFT against a direct sum over each cell's window of copies; the rod (→ ½) and film (→ 1) limits at their convergence orders; the periodic cube (⅓, uniform field); periodic Voronoi against a brute-force oracle; a periodic perpendicular film on the Stoner–Wohlfarth astroid |
 | `test_thermal.py` | Philox against its known-answer vectors; the thermal field's variance and independence; Heun and RK23 orders at T = 0; uncoupled macrospins against the Boltzmann distribution and the Langevin curve, at two damping values; a single macrospin under heavy step rejection and the Brownian bridge; the escape rate against the Fokker–Planck operator (slow); CPU = CUDA |
+| `test_gneb.py` | energy barriers: the macrospin on the axis (exact) and at a tilted field against a 1D scan; a wall entering a free-ended wire against its closed form, at second order; path geometry and tangents; truncation; seeds; the `gneb` stage; the cube's 25 k_BT crossing (slow) |
 
 ## Validation against published results
 
@@ -38,6 +39,7 @@ Physics tests take a `device` fixture, so each one runs on `cpu` and, on a CUDA 
 | Periodic perpendicular film (Q = 2.5, P = 10): switching at ψ = 30° | −0.79446 T | Stoner–Wohlfarth with H_K,eff: −0.79443 T | 2·10⁻⁵ T |
 | Stoner–Wohlfarth astroid, ψ = 15–75° | — | (cos^{2/3}ψ + sin^{2/3}ψ)^{−3/2} | ≤ 5·10⁻⁴ H_K |
 | Pure 40 nm Nd₂Fe₁₄B cube: switching field | 5.275 T | Fischbacher et al. 2017: 5.29 T | −0.3% |
+| Pure 40 nm Nd₂Fe₁₄B cube: 25 k_BT crossing at 300 K | 3.841 T | Fischbacher et al. 2017: 3.94 T | −2.5% |
 | 25 nm core–shell cube: H_c | 2.721 T | Fischbacher et al. 2018, Fig. 8a: 2.76 T | −0.04 T |
 | 50 nm core–shell cube: H_c | 2.675 T | Fig. 8a: 2.71 T | −0.035 T |
 | 255 decoupled random grains: M_r, H_c | 0.4705 M_s, 0.4627 H_K | the same axes, exactly: 0.4705, 0.4627; isotropic SW: 0.5 ± 0.02, 0.479 ± 0.014 | 3·10⁻¹⁴, 7·10⁻⁸ |

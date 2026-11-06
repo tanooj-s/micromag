@@ -21,12 +21,14 @@ One row per sample, flushed as it is written, so `tail -f` works while a run is 
 |---|---|
 | `llg-dynamics` | `t, mu0_Hx, mu0_Hy, mu0_Hz, mx, my, mz, E_exchange, E_anisotropy, E_zeeman, E_demag, E_total, steps, rejected` |
 | `minimize`, `hysteresis` | `mu0_Hx, mu0_Hy, mu0_Hz, mx, my, mz, E_exchange, E_anisotropy, E_zeeman, E_demag, E_total, iterations` |
+| `gneb` | `mu0_Hx, mu0_Hy, mu0_Hz, image, s, E_total, climbing` |
 
 - `t` is in s and `mu0_H*` in T. The field in each row is the one that row was computed at.
 - `mx, my, mz` is ⟨m⟩ averaged over magnetic cells (Ms > 0).
 - Energies are in J.
 - `steps`, `rejected` and `iterations` count cumulatively within the stage.
 - A refined `hysteresis` stage revisits fields: every field it computed is a row, in the order computed.
+- A `gneb` stage has one row per image per field: `s` is the arc length from the start (rad, the Ms-weighted rms angle) and `climbing` is 1 on the image at the saddle.
 
 ## `trajectory.h5`
 
@@ -41,7 +43,7 @@ float64 throughout, so restarts are exact, compressed losslessly with shuffle + 
 | `/final/m` | the state at the end of the run |
 | `/failed/m` | the last state, if a stage failed |
 
-By default, each stage saves one snapshot at its end. `dump_every` (`llg-dynamics`) or `dump = true` (`hysteresis`) saves more.
+By default, each stage saves one snapshot at its end. `dump_every` (`llg-dynamics`) or `dump = true` (`hysteresis`) saves more. A `gneb` stage saves every image of every field, in the order of its table, with that field in `mu0_H`.
 
 ```python
 import h5py
@@ -76,7 +78,7 @@ state = "stage1"                    # or "final" (the default)
 | `git` | `{hash, dirty}` of the checkout, or `null` outside one |
 | `initial` | the uniform `m`, or the restart file, state and SHA-256 |
 | `regions` | per `[[region]]`: `id`, `material`, `shape`, exact `volume_m3` (null for `all` and inverted shapes) and painted `cells_m3` |
-| `stages` | per stage: `type`, `wall_s`; for `hysteresis` a `summary` with `Hc_T`, `switch_T` and `remanence`; for `llg-dynamics` `temperature`, `method`, `dt` (heun) or `tol`, `seed`, `steps`, `rejected` and `max_bridge_depth` (D43) |
+| `stages` | per stage: `type`, `wall_s`; for `hysteresis` a `summary` with `Hc_T`, `switch_T` and `remanence`; for `gneb` `seed` and a `summary` with `mu0_H_T`, `barrier_J`, `barrier_kT` and `Hc_T`; for `llg-dynamics` `temperature`, `method`, `dt` (heun) or `tol`, `seed`, `steps`, `rejected` and `max_bridge_depth` (D43) |
 
 The file is rewritten after each stage, so a killed run still shows how far it got.
 

@@ -16,7 +16,7 @@ Problem(grid, Ms, A, K, k, H_ext, device, regions, coupling, demag)             
    │  field terms: exchange, anisotropy, Zeeman (eqs. 8, 9, 11), demag (eq. 21)           src/fields.cpp, src/demag.cpp
    ▼
 drivers: LLG (eq. 25, Dormand–Prince RK45)  ·  Minimizer (eqs. 22–23, Barzilai–Borwein)   src/llg.cpp, src/minimizer.cpp
-   │  run.py loops over the stages: llg-dynamics, minimize, hysteresis (with refinement)
+   │  run.py loops over the stages: llg-dynamics, minimize, hysteresis (with refinement), gneb (python/micromag/gneb.py)
    ▼
 results folder: card.toml, provenance.json, stage<k>_<type>.csv, trajectory.{h5,xdmf}      python/micromag/run.py
 ```
@@ -47,6 +47,7 @@ results folder: card.toml, provenance.json, stage<k>_<type>.csv, trajectory.{h5,
 | `python/micromag/__init__.py` | the public Python API, plus `energy()` and the in-memory `hysteresis()` |
 | `python/micromag/card.py` | the card schema and its validation |
 | `python/micromag/regions.py` | painting, Voronoi grains, the boundary phase, the pair table |
+| `python/micromag/gneb.py` | energy barriers: geodesic NEB with a climbing image, L-BFGS over the chain, path truncation (D48, D49) |
 | `python/micromag/run.py` | `micromag run`: stages, the results folder, provenance |
 | `tests/` | pytest, the single test runner (see [verification.md](verification.md)) |
 | `examples/` | input cards |

@@ -24,6 +24,7 @@ A finite-difference micromagnetic solver, written from scratch in C++ and CUDA a
 - Landau–Lifshitz–Gilbert dynamics with an adaptive Dormand–Prince RK45, and an energy minimizer with refined hysteresis sweeps.
 - [A thermal field](docs/thermal.md): Brown's stochastic field, integrated by Heun or by adaptive RK23 with an exact Brownian bridge, with the same random numbers on the CPU and the GPU.
 - [A CUDA backend](#gpu) in float64, with every kernel tested against the CPU implementation.
+- Energy barriers by geodesic NEB with a climbing image, moved by L-BFGS: thermal coercivity without simulating the waiting time.
 - [One TOML input card in, one results folder out](#input-cards): CSV tables, HDF5 states and full provenance.
 - Free or periodic boundaries on any axis, with the periodic demag summed over copies of the tile, as in mumax3.
 - [Material regions on the MuMax3 model](#materials-regions-and-grains): painted shapes, 3D Voronoi grains with per-grain easy axes, an exact grain-boundary phase, and exchange coupling per region pair.
@@ -66,7 +67,7 @@ card.toml  provenance.json  stage1_hysteresis.csv  trajectory.h5  trajectory.xdm
 
 ## Documentation
 
-- [User guide (PDF)](docs/guide.pdf): an 11-page introduction for first-time users: the model, the implementation choices, the simulations you can run and every card parameter
+- [User guide (PDF)](docs/guide.pdf): a 12-page introduction for first-time users: the model, the implementation choices, the simulations you can run and every card parameter
 - [Input cards](docs/cards.md): every section and key, with units and defaults
 - [The results folder](docs/results.md): the CSV columns, the HDF5 layout, provenance
 - [Running on a GPU](docs/gpu.md): CUDA builds, Colab, Slurm
@@ -78,7 +79,7 @@ card.toml  provenance.json  stage1_hysteresis.csv  trajectory.h5  trajectory.xdm
 
 ### Input cards
 
-A card has a few setup sections, then stages that run in order. The magnetisation carries over from one stage to the next, and each stage states its own field. There are three stage types: `llg-dynamics`, `minimize` and `hysteresis`.
+A card has a few setup sections, then stages that run in order. The magnetisation carries over from one stage to the next, and each stage states its own field. There are four stage types: `llg-dynamics`, `minimize`, `hysteresis` and `gneb`.
 
 ```toml
 [grid]
