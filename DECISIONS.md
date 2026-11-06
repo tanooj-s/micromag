@@ -765,6 +765,7 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
   - The CUDA backend already builds its kernel from the host `demag_tensor(g)`, so only its padding and its exchange kernel change.
 - **Correction (2026-11-03, implementation):** each copy is evaluated at |offset| and given the parity signs, as the octant mirroring does, not evaluated directly at a negative offset. Newell's cancellations (D14) make a direct evaluation at −X round differently: the window direct-sum check missed 1e-12 by a hair on the film case (1.0e-12), with individual entries off by up to 2e-11 relative. With the parity rule, every case passes, and pbc = 0 still gives the bitwise-identical tensor (sha256 of three grids unchanged).
 - **Result (2026-11-03, laptop CPU):** tensor setup 0.9 s for 128×128×1 at pbc = [10, 10, 0], 22.4 s for 64³ at [5, 5, 5], 21.3 s for 32³ at [10, 10, 10] (estimates were 2 s, 45 s, —). 64³ at [10, 10, 10] would take about 3 min. Once per run, so no cheaper far-copy kernel is needed yet.
+- **Correction (2026-11-05):** the Context is wrong about 2D. Dipole fields fall as 1/r³, so the lattice sum converges absolutely over a line or a plane, and only the 3D sum is conditional. A film's or a rod's limit doesn't depend on the shape the copies fill, which the measured N_zz → 1 and N_yy → ½ (D47) show. A finite P is still what mumax3 does and what `pbc` means here, but in 1D and 2D it is a truncation of a well-defined limit: 1 − N_zz = 8.0e-3 for a 16×16×2 tile at P = 10 is about 8 mT in H_K,eff against an infinite film. Fixed in `docs/cards.md`.
 
 ### D46: PBC card key, Grid, outputs and docs (refines D9, D27, D28) (2026-11-03)
 - **Context:** cards must express PBC (D27), and the results must record how a run was made (D28).
@@ -806,3 +807,54 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
   - No half weights at the window ends for even n: caught by the window direct sum only.
   - Grains without the minimum image (`paint` not passing the period): caught by the periodic card test only. The `voronoi` tests call it with the period directly, so they cannot see this.
   - Not planted: the GPU still padding a periodic axis (no GPU here); the CPU-vs-CUDA comparisons with PBC cases cover it on the next GPU run.
+
+### D48: Energy barriers by geodesic NEB with a climbing image (refines D40) (2026-11-05)
+- **Context:** direct thermal runs reach barriers of a few k_BT (D41). The review's Fig. 7 needs 25 k_BT: the 40 nm Nd₂Fe₁₄B cube switches at 5.29 T statically and at µ0Hc = 3.94 T when the barrier reaches 25 k_BT at 300 K (Fischbacher et al., APL 111, 072404, the review's ref. 30). The user chose this as iteration 9's headline result (2026-11-05). Multi-GPU leaves the row: D40 found it pays off only beyond about 10⁷ cells per V100, and it becomes an optional iteration 10.
+- **Decision:**
+  - **Method:** geodesic NEB (Bessarab, Uzdin & Jónsson, Comput. Phys. Commun. 196, 335 (2015)) with a climbing image. Each image feels the true force perpendicular to the path and a spring force along it; the highest image drops its spring and has its force along the path inverted, so it lands on the saddle with no interpolation.
+  - **Geometry:** the distance between two states is L = √(Σ wᵢ θᵢ²), with θᵢ the great-circle angle in cell i and wᵢ = Msᵢ / Σ Ms. The weight is our addition (GNEB was written for atomic spins): vacuum cells drop out and L doesn't grow under mesh refinement. In this metric the energy gradient on cell i is proportional to the torque m × H, the same measure `Minimizer` stops on (eq. 22–23).
+  - **Tangent:** the difference to the higher-energy neighbour (Henkelman & Jónsson 2000, the review's ref. 82), blended by the energy differences at an extremum, projected onto each cell's tangent plane, normalised over the state.
+  - **Spring:** F = κ (L₊ − L₋) τ̂, constant along the chain, with κ = 10 (M − 1) ΔE / L² recomputed from the current path (M images, ΔE its energy range, L its length). This balances the true force at about 10% uneven spacing. GNEB reports that a wide range of κ works once the tangent is right, so it is not a card key.
+  - **First path:** great-circle interpolation per cell; exactly antiparallel cells rotate about a fixed axis perpendicular to m.
+  - **Driver:** pure Python on `Problem.effective_field` and `Problem.energies`, one `Problem` for all images, so no C++ changes and the CUDA path comes through `Problem`.
+- **Alternatives:**
+  - The string method, as the source paper used (conjugate gradient, energy-weighted distance, truncated path): reuses `Minimizer`, but the user chose GNEB for the exact saddle. The saddle belongs to the landscape, so the 3.94 T comparison still holds.
+  - Seeding the path from an `llg-dynamics` reversal: measured 763 steps and 50 s on the laptop for the 30³ cube at 5.35 T, α = 1, and it shows real nucleation (at 45 ps ⟨mz⟩ = 0.925 with a cell at −1.000). Deferred by the user until the wrong-path risk is measured.
+  - A C++ driver: all images stay on the device, but no measurement yet says the copies matter.
+- **Consequence:**
+  - GNEB descends locally, so a coherent great-circle start may stay on the coherent route. The two are far apart on the cube: KV(1 − h)² ≈ 11,000 k_BT at 3.94 T (estimate) against 25 k_BT, and a coherent barrier vanishes near 6.09 T, not 5.275 T. The D51 self-consistency check catches this.
+  - GNEB does one field evaluation per image per iteration. Per image on the 30³ cube: 10 ms field, 10 ms energy, 1.3 ms numpy bookkeeping (laptop CPU). On a GPU the host work may dominate; to be measured.
+
+### D49: L-BFGS over the whole chain (2026-11-05)
+- **Context:** GNEB forces depend on neighbouring images and are not the gradient of any energy, so `Minimizer` can't drive them. The user chose L-BFGS over velocity projection (2026-11-05), following Ivanov et al., J. Phys.: Condens. Matter 32, 345901 (2020), arXiv:2001.10372.
+- **Decision:**
+  - All movable images form one vector; dot products sum over images and cells.
+  - A step rotates each cell (Rodrigues), so |m| = 1 holds exactly.
+  - No line search: there is no objective to search along. The step's rms rotation is capped instead.
+  - History is stored as per-cell 3-vectors and projected onto the current tangent planes when used (the paper doesn't say how it handles this).
+  - Safeguards: the history is cleared when the climbing image changes (as in the paper), and when a step would oppose the force, restarting from the plain force. No second optimiser.
+  - The rotation cap and history length are constants in the code, measured on the wire test (Result).
+- **Alternatives:** velocity projection (GNEB's appendix; few lines, but slower by up to 8× in the paper's atomistic cases); a fixed reference frame with re-basing (closer to full OSO, more code); both optimisers with an automatic fallback (a second implementation before any failure).
+- **Consequence:** the paper describes no preconditioner, and our exchange term is stiff, so iteration counts on a 30³ cube are unknown. Repeated resets or no convergence on the wire: stop and show the data.
+
+### D50: The `gneb` stage, outputs and convergence (refines D27, D28) (2026-11-05)
+- **Context:** cards must express a barrier calculation (D27), and the results folder must hold it (D28).
+- **Decision:**
+  - One stage, `type = "gneb"`, with keys `mu0_H` (a list of field values along `direction`, T), `direction`, `images` (default 20, counting both ends), `temperature` (default 300 K), `torque_tol` (default 1e-6), `max_iter` (default 100000).
+  - At each field the stage minimizes the start state from the current m and the reversed state from −m, then runs the path. It leaves m at the last field's start state.
+  - Convergence: the largest force on any image, as max |m × H|/Ms, below `torque_tol`. The climbing image starts at 10× `torque_tol`.
+  - `stage<k>_gneb.csv`: one row per image per field (field, image, arc length, energy, climbing flag). `trajectory.h5`: every field's path in the stage's `m` stack, with its field in `mu0_H`.
+  - Summary in provenance: the barrier per field in J and k_BT, and `Hc_T`, the field where the barrier crosses 25 k_BT, interpolated linearly in the field.
+- **Alternatives:** one stage per field (long cards; the crossing would need a separate step).
+- **Consequence:** the `failed` state of a stage holds m, not the path; a path is written only once converged.
+
+### D51: Iteration-9 checks (2026-11-05)
+- **Context:** a path method can converge to a wrong path and still look fine, so each check compares against something independent of it.
+- **Decision:** new `tests/test_gneb.py`, physics tests on `cpu` and `cuda`:
+  - **Macrospin:** E_B = KV(1 − h)² with the field on the axis; a tilted field against a 1D scan of E(φ).
+  - **Wire with free ends, demag off:** the saddle is one domain wall, E_B = 4√(AK)·S, with the error falling about 4× per halving of dx (D13). Its great-circle start is coherent, so this also measures the wrong-path risk.
+  - **Path properties:** |m| = 1, end states unchanged, force below tolerance on every image, even spacing, the barrier unchanged when `images` doubles; distance and tangent on known rotations.
+  - **Card and outputs:** validation, the CSV, the h5 stack, the summary.
+  - **Physics check (`-m slow`):** the 30³ cube of D32, field 1° off z, 3–4 fields around 3.94 T and one near 5.275 T. The 25 k_BT crossing within 3% of 3.94 T (D32's band), and the barrier going to zero at our own static field of 5.275 T (the paper's self-consistency argument).
+- **Alternatives:** a 1% band on the cube (finite elements at 1.5 nm against our 1.33 nm cubes may differ by more, for reasons unrelated to GNEB); an escape-rate cross-check against iteration 7 (the macrospin's closed form already covers it).
+- **Consequence:** stop and show the data if the wire or cube finds the coherent path, or if too few images land near the cube's saddle (then choose seeding, energy-weighted springs or truncation).
