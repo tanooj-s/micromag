@@ -32,7 +32,7 @@ Iterations 1–4 followed these steps, and the user expects them each time:
 
 ## Commands
 The build uses uv with scikit-build-core and nanobind. `uv run` rebuilds the C++ automatically when `src/`, `CMakeLists.txt` or `pyproject.toml` change.
-- **Test (laptop, CPU):** `uv run pytest`. The benchmark runs (µMAG SP2–SP4, the cubes, the Stoner–Wohlfarth ensemble; about 15 min on the laptop CPU) are marked `slow` and excluded by default. Run them with `uv run pytest -m slow -s`, which prints the comparison numbers. On this Mac, `/usr/local/bin/cmake` is an x86_64 binary, so export `ARCHFLAGS="-arch arm64"`, or the extension builds for the wrong architecture.
+- **Test (laptop, CPU):** `uv run pytest`. The benchmark runs (µMAG SP2–SP4, the cubes, the Stoner–Wohlfarth ensemble; about 27 min on the laptop CPU) are marked `slow` and excluded by default. Run them with `uv run pytest -m slow -s`, which prints the comparison numbers. On this Mac, `/usr/local/bin/cmake` is an x86_64 binary, so export `ARCHFLAGS="-arch arm64"`, or the extension builds for the wrong architecture.
 - **Cluster storage:** the home directory quota is small, so the uv cache and Python installs go on scratch. These lines are in `~/.bashrc` on the cluster:
   ```
   export UV_CACHE_DIR=/gpfs/u/scratch/TMGN/TMGNtjsh/.cache/uv

@@ -167,8 +167,8 @@ The CPU and GPU give the same results. The full table, including µMAG SP2 and i
 ## Contributing
 
 ```console
-$ uv run pytest                 # fast suite, about 10 s
-$ uv run pytest -m slow -s      # physics benchmarks, about 15 min on a CPU
+$ uv run pytest                 # fast suite, about 90 s
+$ uv run pytest -m slow -s      # physics benchmarks, about 27 min on a CPU
 ```
 
 The house rules, from [CLAUDE.md](CLAUDE.md):

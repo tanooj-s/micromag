@@ -4,49 +4,33 @@ Roadmap, status and open work: read at the start of each session. Decisions D1�
 comparisons in `BENCHMARKS.md` (D38).
 
 ## Roadmap
-Each iteration is done when its check passes and its decisions are logged in `DECISIONS.md`.
+Each iteration is done when its check passes and its decisions are logged in `DECISIONS.md`. The full check is in the decision named in each row.
 
 | # | Iteration | Check | Status |
 |---|-----------|-------|--------|
-| 0 | Toolchain: CMake + bindings + pytest + one CUDA kernel, run on a laptop and on a cluster GPU node through Slurm | Kernel test passes in both places | laptop ✓ · cluster optional (see below, D25) |
-| 1 | Grid, per-cell materials, exchange / anisotropy / Zeeman (eqs. 8, 9, 11), CPU | Energies of uniform states; H matches the finite-difference gradient of E; analytic 1D Bloch wall (width π√(A/K)) is in equilibrium (torque → 0) with σ → 4√(AK), both errors falling ~4× per halving of dx (D13) | ✓ CPU (`tests/test_fields.py`) |
-| 2 | Demag: Newell tensor, direct O(N²) oracle, zero-padded FFT (eqs. 17–21) | Uniform prisms (cube, 1:2:3 cell, 32×32×1 film) match Aharoni's closed form to 1e-10; far-field tensor → point dipole with error ~4× smaller per doubling of distance; FFT and direct sum agree to 1e-12 (D17) | ✓ CPU (`tests/test_demag.py`) |
-| 3 | LLG (eq. 25) with a self-written adaptive Dormand–Prince RK45 | Macrospin matches the analytic solution; fixed-step error falls ~32× per halving of h (5th order); energy conserved at α = 0 and non-increasing at α > 0; µMAG SP4 field 1: first ⟨mx⟩ = 0 crossing within 3% of OOMMF and RMS ⟨m⟩ difference ≤ 0.05 over 0–1 ns (D20) | ✓ CPU (`tests/test_llg.py`; SP4 with `-m slow`) |
-| 4 | Minimizer: projected steepest descent with Barzilai–Borwein steps (eqs. 22–23), plus a hysteresis driver | Stoner–Wohlfarth astroid: switching fields at ψ = 15–75° within 2·10⁻³ H_K of `(cos^{2/3}ψ + sin^{2/3}ψ)^{−3/2}`; µMAG SP3 (20³): flower/vortex crossover L within 0.5% of 8.47 l_ex (D23) | ✓ CPU (`tests/test_minimizer.py`; SP3 with `-m slow`) |
-| 5 | GPU backend: CUDA kernels + cuFFT; the backend interface is introduced here | Every test passes with `device="cuda"` and the direct CPU-vs-GPU comparisons hold their D26 tolerances, run on at least one CUDA GPU of sm_70 or newer (which GPU is recorded). Nsight roofline numbers are optional (D25) | ✓ CPU + GPU (Tesla T4, CUDA 13.0, Colab, 2026-10-18; D26 Result) |
-| 6a | Workflow: one simulation from a TOML input card into a results folder (per-stage CSV thermo tables, an HDF5 dump of magnetic states, provenance) through `micromag run` and `micromag.run()` (D27, D28). **Requirement (user, 2026-10-17):** a simple local workflow, parameters in → results out, from an input file, without hand-editing a Python script, with the same entry point on any machine | `examples/sp4.toml` run through `run()` meets D20's SP4 criteria; fast tests of validation, the results folder, restarts, dumps and failure handling (D29) | ✓ (`tests/test_card.py`, `tests/test_run.py`; SP4 card with `-m slow`) |
-| 6b | Science runs: interim box material regions, field refinement near switching, a hysteresis summary (H_c, switching field, remanence), on a GPU; scaling study and Nsight optional (D25, D30, D31) | µMAG SP2 H_c and remanence vs d/l_ex against the exact limit and OOMMF 1.1; the pure 40 nm Nd₂Fe₁₄B cube against Fischbacher et al. 2017 (5.29 T); the Fig. 8a core–shell cube against the paper's finest-mesh curve (D32) | ✓ CPU + GPU (Colab T4, 2026-10-20), except SP2 at d/l_ex = 30: −1.3% against a 1% tolerance, accepted as a known miss (xfail) pending a cell-size study (D32) |
-| 6c | Material regions on the MuMax3 model: a per-cell region map painted from named materials and shapes, 3D Voronoi grains with per-grain easy axes and an optional grain-boundary phase, exchange scaled per region pair, a demag switch (D33–D37) | Shapes' cell volumes → exact volumes under refinement; grain labels and the boundary layer against brute-force oracles (the two-seed slab exactly); exchange with a pair table bitwise unchanged at scale 1, against a hand-computed chain, still −∇E, CPU = CUDA; decoupled random-axis grains without demag: remanence exactly Σ n_g\|k̂_g·ĥ\| / Σ n_g and H_c within 5·10⁻³ H_K of a Stoner–Wohlfarth oracle for the same axes, both within 3σ of the isotropic 0.5 and 0.479 H_K; the migrated 25 nm core–shell cube still gives 2.721 T (D37) | ✓ CPU + GPU (`tests/test_regions.py`, `tests/test_fields.py`; ensemble with `-m slow`; Colab T4, 2026-10-20) |
-| 6d | An original study using the 6b/6c tools: a question the paper only touches (e.g. shell thickness or anisotropy, field angle, a corner defect, grain-boundary coupling) | Set in the 6d design, after 6b is validated | shelved (D40): optional, not required |
-| 7 | Thermal field: Brown's stochastic field in LLG (eq. 25), at the same cells and time step as the dynamics; fixed-step Heun and adaptive RK23 with a Brownian bridge, Philox noise shared by CPU and CUDA (D40–D43) | Philox matches its known-answer vectors and the noise has mean 0, variance σ² and no correlations; at T = 0, Heun and RK23 converge at 2nd and 3rd order on the D20 macrospin; an ensemble of uncoupled macrospins matches the Boltzmann distribution (and the Langevin curve at K = 0) within 4σ for both methods, independently of α; the bridge keeps Var(ΣΔW) = t under forced rejections; the escape time matches the smallest Fokker–Planck eigenvalue (slow); CPU = CUDA (D44) | ✓ CPU (`tests/test_thermal.py`; escape rate with `-m slow`; 2026-10-26); GPU run pending |
-| 8 | Periodic boundary conditions on any axes: exchange wraps, demag sums P copies per side in a window centred on each cell (no padding on a periodic axis), Voronoi grains by minimum image (D45–D47) | Wrapped exchange exact on a spin spiral (1e-12, n = 1, 2 included) and still −∇E; periodic FFT = a direct sum over each cell's window (1e-12); a rod's N_yy = N_zz → ½ (~4× per doubling of P), a film's N_zz → 1 (~2×), a cubic tile exactly ⅓ with a uniform field; pbc = 0 bitwise unchanged; periodic grains against a brute-force oracle and invariant under a roll; a periodic perpendicular film stays uniform and switches on the Stoner–Wohlfarth astroid with H_K,eff, a free one does not; CPU = CUDA (D47) | ✓ CPU (`tests/test_pbc.py`; 2026-11-03); GPU run pending (CUDA not yet compiled) |
-| 9 | Energy barriers: geodesic NEB with a climbing image, L-BFGS over the whole chain, a `gneb` stage sweeping fields (D48–D51) | A macrospin's E_B = KV(1 − h)², and a tilted field against a 1D scan of E(φ); a free-ended wire at h = 0.1 against the closed form for a wall entering its end (4√(AK)·S at h = 0), with the error falling ~4× per halving of dx; images on the path with force below tolerance, even spacing, the barrier unchanged when images double; the 40 nm Nd₂Fe₁₄B cube's 25 k_BT crossing within 3% of 3.94 T, and its barrier reaching zero at our static 5.275 T (slow); CPU = CUDA (D51) | ✓ CPU (`tests/test_gneb.py`; cube with `-m slow`; 2026-11-06); GPU run pending |
+| 0 | Toolchain: CMake, bindings, pytest, one CUDA kernel | Kernel test passes on a laptop and on a cluster GPU node | laptop ✓ · cluster optional (D25) |
+| 1 | Grid, per-cell materials, exchange, anisotropy, Zeeman (eqs. 8, 9, 11) | Uniform energies, H = −∇E, the analytic Bloch wall (D13) | ✓ CPU |
+| 2 | Demag: Newell tensor, O(N²) oracle, padded FFT (eqs. 17–21) | Aharoni's prisms to 1e-10, the far field, FFT = direct to 1e-12 (D17) | ✓ CPU |
+| 3 | LLG (eq. 25), adaptive Dormand–Prince RK45 | Analytic macrospin, 5th order, energy behaviour, µMAG SP4 (D20) | ✓ CPU |
+| 4 | Minimizer (eqs. 22–23) and hysteresis driver | Stoner–Wohlfarth astroid, µMAG SP3 (D23) | ✓ CPU |
+| 5 | GPU backend: CUDA, cuFFT, the backend interface | Every test with `device="cuda"`, CPU = GPU to D26's tolerances | ✓ CPU + GPU (Tesla T4, 2026-10-18) |
+| 6a | Workflow: TOML card → results folder through `micromag run` and `micromag.run()` (D27, D28) | The SP4 card meets D20; validation, dumps, restarts, failures (D29) | ✓ |
+| 6b | Science runs: hysteresis refinement and summary on a GPU (D30, D31) | SP2, the 40 nm cube, the Fig. 8a core–shell cube (D32) | ✓ CPU + GPU (T4, 2026-10-20), except SP2 at d/l_ex = 30: −1.3% against 1%, a known miss (xfail) |
+| 6c | Material regions on the MuMax3 model (D33–D36) | Shapes, grains and coupling against oracles; the SW ensemble; the 25 nm cube unchanged (D37) | ✓ CPU + GPU (T4, 2026-10-20) |
+| 6d | An original study using the 6b/6c tools | Set in its design | shelved, optional (D40) |
+| 7 | Brown's thermal field; Heun and RK23 with a Brownian bridge; Philox noise (D41–D43) | Philox vectors, orders, Boltzmann and Langevin ensembles, the bridge, the escape time, CPU = CUDA (D44) | ✓ CPU (2026-10-26); GPU run pending |
+| 8 | Periodic boundaries on any axes (D45, D46) | Spiral exchange, periodic FFT = direct, demag factors, grains, the perpendicular film, CPU = CUDA (D47) | ✓ CPU (2026-11-03); GPU run pending, CUDA not yet compiled |
+| 9 | Energy barriers: geodesic NEB, L-BFGS, a `gneb` stage (D48–D50) | Macrospin, wire closed form, path properties, the cube's 25 k_BT crossing within 3% of 3.94 T, CPU = CUDA (D51) | ✓ CPU (2026-11-06); GPU run pending |
 | 10 | Stretch, optional: multi-GPU | — | — |
 
 ## Resume here
-State at the end of the 2026-10-23 session: everything is committed and pushed.
-- **Done:** iterations 1–5 (5 verified on a Tesla T4), 6a (the card → `micromag run` → results folder workflow), 6b and 6c on CPU and GPU.
-- **Docs (D39, 2026-10-20):** README.md, docs/ (cards, results, verification, architecture, gpu), GPL-3.0 LICENSE, CPU CI on GitHub Actions. 6d is optional and no longer required (D40).
-- **Test counts (2026-10-26, laptop):** `uv run pytest` gives 130 passed, 48 skipped (CUDA), 24 deselected in 74 s; `-m ""` gives 140 passed and 62 skipped in 16.5 min.
-- **Test counts (2026-10-20):** `uv run pytest` gives 105 passed, 35 skipped (CUDA) and 20 deselected (slow) on the laptop; 139 passed and 1 skipped on a Colab T4. The GPU slow coercivity tests give 6 passed and SP2 d/l_ex = 30 xfail (20 min). `-m slow` takes about 15 minutes on the laptop CPU, mostly the cube checks; the user chose to keep them on both devices (D32).
-- **Next requirement (user, 2026-10-23):** the thermal field, iteration 7 (D40). Thermal effects are treated at the same continuum scale the dynamics run at.
-- **Iteration 7 design settled (2026-10-26, D41–D44).** Euler–Maruyama was dropped: its Itô correction is purely along m, and the renormalisation already supplies it (D42).
-- **Iteration 7 on the CPU (2026-10-26):** all checks pass (D44 Result). One finding: the bridge matters for few-cell systems and is invisible on large grids (D44 Correction). One known gap: a wrong bridge mean coefficient (D44 Mutation check).
-- **Iteration 8, periodic boundaries (2026-11-03):** done on the CPU (D45–D47 Results). Next: compile CUDA (Docker) and run `uv run pytest -m "" -v -s` on a GPU, then the D47 GPU Result.
-- **Test counts (2026-11-03, laptop):** `uv run pytest` gives 166 passed, 69 skipped (CUDA), 24 deselected in 76 s; `-m slow` gives 10 passed, 14 skipped in 15 min, every benchmark unchanged.
-- **Iteration 9, energy barriers (2026-11-06):** done on the CPU (D48–D51 Results): the cube's 25 k_BT crossing at 3.841 T against 3.94 T. Open: why the 15³ cube often fails to converge (D49; see the deferred study under open work), and whether host work dominates on a GPU (D48).
-- **Test counts (2026-11-06, laptop):** `uv run pytest` gives 203 passed, 88 skipped, 26 deselected, 1 warning in 90.55s (0:01:30); `-m slow` gives 11 passed, 15 skipped in 27 min.
-- **First thing next session (deferred by the user, 2026-11-03):** one GPU session covers iterations 7, 8 and 9. First the CUDA compile check with Docker (below), since the iteration-8 CUDA changes (exchange wrap, unpadded periodic axes) have never been compiled. Then `uv run pytest -m "" -v -s` on a Colab T4, and the D44, D41, D47 and D51 GPU Results.
-- **Card coverage for runs:** before a run, check the card covers it:
-  - regions: named materials, shapes, Voronoi grains with a boundary phase, pair coupling (D33–D35); see `examples/grains.toml`
-  - stages are `llg-dynamics`, `minimize` and `hysteresis`; `llg-dynamics` takes `temperature`, `method`, `dt` and `seed` for thermal runs (D43)
-  - there is no cross-run results table yet: each run is its own folder under the git-ignored `runs/`. A small `micromag summarize runs/*`, reading each `provenance.json` into one table, was suggested and not yet agreed.
+State on 2026-11-06: iterations 0–9 are done on the CPU, and everything through 6c is verified on a Tesla T4.
+- **Test counts:** `uv run pytest` gives 203 passed, 88 skipped, 26 deselected in 90 s; `-m slow` gives 11 passed, 15 skipped in 27 min (laptop, 2026-11-06). Last GPU run: 139 passed, 1 skipped on a Colab T4 (2026-10-20).
+- **First thing next session (deferred by the user, 2026-11-03):** one GPU session covers iterations 7, 8 and 9. First the CUDA compile check with Docker (`docs/gpu.md`), since the iteration-8 CUDA changes (exchange wrap, unpadded periodic axes) have never been compiled. Then `uv run pytest -m "" -v -s` on a Colab T4 (setup in `docs/gpu.md`; a later `uv run` without `SKBUILD_CMAKE_DEFINE` silently rebuilds without CUDA), and the D44, D41, D47 and D51 GPU Results.
 - **Open work, in rough order:**
-  1. **Iteration 7, the thermal field** (D40–D44).
-  1a. **Cell-size dependence of thermal results** (open research question, user, 2026-10-25; D41): smaller cells carry shorter-wavelength fluctuations, so thermal results depend on the mesh. To be addressed during the code's development, e.g. by measuring ⟨m⟩(T) of a film against cell size once iteration 7 works.
-  2. **SP2 d/l_ex = 30 cell-size study** (the user's call: a fundamental scaling study to keep, 2026-10-20). Run H_c/Ms at d/l_ex = 30 with nz = 3, 4, 5, 7 cells through the thickness on a GPU; nz = 5 is OOMMF 1.1's 0.60 l_ex, and nz = 6 (0.5 l_ex) gave 0.04533. If nz = 5 lands within 1% of 0.04594, the test should use OOMMF's cell; otherwise the references disagree at this size. A 6d candidate. The script is the `sp2_conv.py` cell below.
-  3. **The 6d design** (optional, D40): an original study using the 6b/6c tools.
-  3a. **GNEB convergence study** (deferred by the user for token and time cost, 2026-11-06; D49): why the 15³ cube fails, whether to adapt the L-BFGS history, and whether L-BFGS can be beaten here. Nothing has been run.
+  1. **Cell-size dependence of thermal results** (open research question, user, 2026-10-25; D41): smaller cells carry shorter-wavelength fluctuations, so thermal results depend on the mesh. For example, measure ⟨m⟩(T) of a film against cell size.
+  2. **SP2 d/l_ex = 30 cell-size study** (the user's call: a fundamental scaling study to keep, 2026-10-20). Run H_c/Ms at d/l_ex = 30 with nz = 3, 4, 5, 7 cells through the thickness on a GPU; nz = 5 is OOMMF 1.1's 0.60 l_ex, and nz = 6 (0.5 l_ex) gave 0.04533. If nz = 5 lands within 1% of 0.04594, the test should use OOMMF's cell; otherwise the references disagree at this size. A 6d candidate. The script is below.
+  3. **GNEB convergence study** (deferred by the user for token and time cost, 2026-11-06; D49): why the 15³ cube fails, whether to adapt the L-BFGS history, and whether L-BFGS can be beaten here. Nothing has been run.
      - **Settled:**
        - Harness: a separate lab copy under `studies/gneb/`, checked to reproduce `gneb()` iteration for iteration. `gneb.py` stays untouched until a winner is chosen. Scripts committed, raw results in the git-ignored `runs/`.
        - Adaptive history is adopted only with at least 25% fewer median field evaluations than the best fixed history, paired by seed, with no lower success rate and the same barrier, on held-out cases (the wire and the core–shell cube).
@@ -57,19 +41,11 @@ State at the end of the 2026-10-23 session: everything is committed and pushed.
        - Stiffness is an unlikely cause: 30³ is about 4× stiffer and converges, so D49's preconditioner may not be the fix.
        - Likelier causes: an under-resolved wall (2.67 nm cells, twice δ0) giving a rugged path and a hopping climbing image; truncation repeatedly wiping the history; the stop test needing every image below tolerance when only the saddle sets the barrier; odd n (15 is the only odd mesh tried).
        - A Krylov solve on a converged path gives a lower bound on what any such method could achieve.
-  4. Iteration 10 (stretch, optional): multi-GPU.
-- **Optional recorded runs** (D32 Correction): the full SP2 curve and the 100 nm core–shell cube (`examples/sp2.toml`, `examples/cube_core_shell.toml`), for benchmark data only.
-- **Run a card:** `uv run micromag run examples/sp4.toml -o runs/sp4` (add `--device cuda` on a GPU machine).
-- **Optional:** the cluster is one GPU target among many (D25). Its build needs numpy and h5py capped at versions with glibc 2.17 wheels (see the optional open issue below).
-- **CUDA compile check without a GPU** (rerun after CUDA changes), from the repo root, with Docker Desktop for Apple Silicon:
-  ```
-  docker run --rm -v "$PWD":/src -w /src -e UV_PROJECT_ENVIRONMENT=/tmp/venv -e SKBUILD_CMAKE_DEFINE=MICROMAG_CUDA=ON \
-    nvidia/cuda:12.1.1-devel-ubuntu22.04 bash -c \
-    'apt-get update -qq && apt-get install -y -qq curl >/dev/null && curl -LsSf https://astral.sh/uv/install.sh | sh && . $HOME/.local/bin/env && uv sync'
-  ```
-  The laptop's original Docker Desktop was an Intel 4.3.0 build that refuses to start on Apple Silicon; the user reinstalled the arm64 build (4.95.0) on 2026-10-18.
-- **GPU run on Colab:** pick the T4 runtime, clone, install uv, set `PATH` to include `/root/.local/bin` and `/usr/local/cuda/bin`, `CUDACXX=/usr/local/cuda/bin/nvcc` and `SKBUILD_CMAKE_DEFINE=MICROMAG_CUDA=ON` in `os.environ` (a later `uv run` without that variable silently rebuilds without CUDA), then `uv sync` and `uv run pytest -m "" -v -s`.
-- **SP2 cell-size script** (run on Colab after the setup above, `uv run python sp2_conv.py 3 4 5 7`):
+  4. **Whether `gneb` host work dominates on a GPU** (D48): measure it in the GPU session.
+  5. **`micromag summarize runs/*`:** one table from each run's `provenance.json`. Suggested, not yet agreed.
+  6. **Known test gaps:** a wrong embedded-error weight in the LLG integrator wastes steps but gives correct results (a step-count bound on the macrospin would catch it; offered in iteration 3, not added); the bridge's conditional mean (D44); L-BFGS history not projected onto the tangent planes (D51).
+  7. **Optional:** the 6d design (D40); multi-GPU (iteration 10); the recorded runs of D32 (the full SP2 curve and the 100 nm core–shell cube, benchmark data only); the cluster build (below).
+- **SP2 cell-size script** (run on Colab after the `docs/gpu.md` setup, `uv run python sp2_conv.py 3 4 5 7`):
   ```python
   import pathlib, sys, tempfile
   import numpy as np
@@ -87,7 +63,6 @@ State at the end of the 2026-10-23 session: everything is committed and pushed.
       print(f"nz = {nz}: cell = {cell / lex:.3f} l_ex, Hc/Ms = {abs(s['Hc_T']) / SP2_BM:.5f}, "
             f"remanence {np.round(s['remanence'], 4).tolist()}", flush=True)
   ```
-- **Known test gap (iteration 3):** a wrong embedded-error weight in the LLG integrator makes the error estimate too large, which wastes steps but gives correct results, and no test catches it. A step-count bound on the macrospin run would close the gap. This was offered to the user and not added (iteration 3).
 
 ## Cluster environment
 - **GPU nodes:** 8× Tesla V100-SXM2-32GB per node (sm_70). The driver is 535.104 and supports CUDA ≤ 12.2.
@@ -107,12 +82,6 @@ State at the end of the 2026-10-23 session: everything is committed and pushed.
 - **Won't work:** `export CC=gcc` after the gcc 8.4 load. numpy ≥ 2.3 needs gcc ≥ 9.3 to build, and `cuda/12.1` is only offered under gcc 8.4 (D4).
 - **After that:** the CMake log should report `The CXX compiler identification is GNU 8.4.0`. If it shows 4.8.5, `export CXX=g++`. The cmake and ninja wheels from PyPI still support glibc 2.17.
 - Already fixed: home-directory quota (uv cache moved to scratch) and the empty `CUDA_ARCHITECTURES`.
-
-## Material regions: settled 2026-10-20 (D33–D37)
-The open design (R1–R9, 2026-10-18) was first approached from first principles; the user then chose to copy MuMax3's model. How each question was answered:
-- R1 label map: yes, `uint8`, as MuMax3 (D33). R2 shapes in the card; label files deferred (D33). R3 centre membership, with each shape's exact and painted volume in provenance (D33).
-- R4 named materials, built-in `vacuum`, later paints win (D33). R5 lower corner, unchanged from D30.
-- R6 interphase: a grain-boundary phase in the grain generator, by an exact distance rule (D34). R7 zero-thickness pair coupling: done, as MuMax3 (D35). R8 no distance transform needed (D34). R9 per-region `axis` overrides: yes (D33).
 
 ## MagTense weaknesses we want to avoid
 - One 3,500-line Fortran module holds global `gb_problem` and `gb_solution` state, so solves are not re-entrant.

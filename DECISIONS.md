@@ -618,6 +618,7 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
   - CLAUDE.md names the right file for each kind of entry.
 - **Alternatives:** one file per decision (37 files): loses the chronological read, and every new or corrected entry touches more files. A `docs/` folder: one more level for three files.
 - **Consequence:** the session-start read is about 100 lines. Decisions are found with `grep -n "### D32" DECISIONS.md`.
+- **Correction (2026-11-06; user):** NOTES.md was condensed. It keeps a short check per roadmap row, current state only, and no settled-design summaries, since the decisions hold them.
 
 ### D39: Documentation, license and CI (2026-10-20)
 - **Context:** the repo is public on GitHub but had no README, no license and no CI. Its how-to knowledge lived only in the decision log. The user asked for developer-appropriate docs with a README modelled on astral-sh/uv.
