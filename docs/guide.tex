@@ -1,4 +1,4 @@
-% micromag user guide. Build from docs/: latexmk -pdf -outdir=<tmp> guide.tex, then copy guide.pdf here.
+% micromag user guide. Build from docs/: latexmk -pdf -outdir=<tmp> guide.tex, then copy guide.pdf here. Needs pgfplots (TeX Live has it).
 % Keep it in step with docs/cards.md and docs/results.md: a changed card key or output changes this file too.
 \documentclass[10pt,a4paper]{article}
 \usepackage[T1]{fontenc}
@@ -6,6 +6,8 @@
 \usepackage[scaled=0.85]{beramono}
 \usepackage[margin=2.2cm,top=2.4cm,bottom=2.4cm]{geometry}
 \usepackage{microtype,booktabs,tabularx,graphicx,enumitem,xcolor,listings,caption,fancyhdr,titlesec}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
 \usepackage[hidelinks]{hyperref}
 
 \definecolor{accent}{HTML}{1F4E79}
@@ -77,14 +79,15 @@ results folder.
 \begin{itemize}
   \item Four energy terms: exchange, uniaxial anisotropy, an applied (Zeeman) field and the magnetostatic (demagnetising)
         field, the last computed exactly from the Newell tensor by FFT.
-  \item Three kinds of calculation: time evolution by the Landau--Lifshitz--Gilbert (LLG) equation, energy minimisation,
-        and quasi-static hysteresis sweeps with automatic refinement near switching.
+  \item Four kinds of calculation: time evolution by the Landau--Lifshitz--Gilbert (LLG) equation, energy minimisation,
+        quasi-static hysteresis sweeps with automatic refinement near switching, and energy barriers by geodesic NEB.
   \item A thermal field (Brown's stochastic field) for finite-temperature dynamics.
   \item Materials that vary cell by cell: named materials painted onto the grid as shapes, Voronoi polycrystals with
         per-grain easy axes and an optional grain-boundary phase, and exchange coupling set per pair of regions.
   \item Free or periodic boundaries on any axis, so a small tile can stand in for an extended film, a wire or bulk
         material.
-  \item The same card on a CPU or an NVIDIA GPU, in double precision, with the same results on both.
+  \item The same card on a CPU or an NVIDIA GPU, in double precision, with the same results on both (but see the GPU
+        limit in Section~\ref{sec:validation}).
 \end{itemize}
 
 \textbf{What it does not do (yet).} Cubic or higher-order anisotropy, the Dzyaloshinskii--Moriya interaction,
@@ -131,6 +134,7 @@ physics benchmarks (about 15 minutes on a laptop CPU) and prints the comparisons
 
 % ---------------------------------------------------------------------------------------------------------------------
 \section{The physical model}
+\label{sec:model}
 
 The state is the unit vector field $\vm(\mathbf{r}) = \mathbf{M}/M_s$. Each cell carries its own saturation
 magnetisation $M_s$, exchange stiffness $A$, anisotropy constant $K$ and easy axis $\kh$. The total energy is the sum of
@@ -180,12 +184,257 @@ where $V$ is the cell volume and $\Delta t$ the step. Larger damping needs stron
 less. There is no $1+\alpha^2$ factor: the noise enters $\vH$ in Gilbert's form, as in mumax3.
 
 % ---------------------------------------------------------------------------------------------------------------------
+\section{The physics in more depth}
+\label{sec:physics}
+
+Section~\ref{sec:model} stated the model. This section explains where it comes from and what it predicts, using results
+that can be worked out by hand. Most of them are also what the test suite compares the code against, so they double as
+sanity checks for your own runs. The numbers use the two benchmark materials of Table~\ref{tab:scales}.
+
+\subsection{From atoms to a continuum}
+In a ferromagnet, the quantum-mechanical exchange interaction lines up neighbouring atomic moments. It is strong and
+short-ranged, so the direction of the moments can only turn slowly from one atom to the next. Over a few lattice spacings
+the moments can therefore be replaced by a smooth field $\mathbf{M}(\mathbf{r})$, which is the step that defines
+micromagnetics (paper \S2.1). Well below the Curie temperature the \emph{length} of $\mathbf{M}$ stays at $M_s$ and only
+its direction varies, which is why the state is a unit vector field and why every integrator renormalises $\vm$.
+
+The model must resolve the transition inside a domain wall while staying coarser than the atoms. In a hard magnet that
+wall is only about 4\,nm wide, so the continuum picture is working near its limit there.
+
+The stable states of a magnet at a given field are the local minima of the energy $E[\vm]$ of eqs.~8--11. There are usually
+many, and which one the magnet sits in depends on its history. That dependence is what gives a magnet its memory.
+
+\subsection{What each energy term wants}
+\textbf{Exchange} wants $\vm$ uniform and charges for gradients. A spiral $\vm = (\cos qx, \sin qx, 0)$ costs $Aq^2$ per
+unit volume, so a twist twice as tight costs four times as much.
+
+\textbf{Anisotropy} comes from the crystal, which through spin--orbit coupling favours some directions for $\vm$. The
+uniaxial form $-K(\vm\cdot\kh)^2$ cannot tell $+\kh$ from $-\kh$. This gives two equally good minima, the ``up'' and
+``down'' of a permanent magnet, and turning away from either by an angle $\theta$ costs $K\sin^2\theta$ per unit volume.
+
+\textbf{Zeeman} energy is the applied field pulling $\vm$ towards itself. It is the only term that separates up from
+down, and the only one linear in $\vm$.
+
+\textbf{Demagnetising} energy is the magnet acting on itself. With no currents, $\nabla\times\vH_d = 0$ and
+$\nabla\cdot\mathbf{B} = 0$ give $\nabla\cdot\vH_d = -\nabla\cdot\mathbf{M}$ (paper eqs.~12--15): the field behaves as
+if it came from magnetic charges, of density $-\nabla\cdot\mathbf{M}$ in the volume and $\mathbf{M}\cdot\mathbf{n}$ on
+the surface. Field lines run from the positive to the negative charges, so inside a uniformly magnetised body they
+oppose $\mathbf{M}$, hence the name. The factor $\frac12$ in eq.~10 is there because this is a self-energy: each pair of
+cells must be counted once. The energy equals $\frac{\mo}{2}\int\vH_d^2\,dV$ over all space, so it is never negative,
+and it falls as charges are avoided. This is the one term that sees the whole magnet at once, and it drives $\vm$ to
+lie along surfaces, to form closure patterns and to split into domains.
+
+For a uniformly magnetised ellipsoid the field is uniform, $\vH_d = -N\mathbf{M}$, with demagnetising factors along the
+three axes that sum to 1: $\frac13$ each for a sphere, $(0,0,1)$ for a thin film and $(\frac12,\frac12,0)$ for a long rod.
+The periodic tests reproduce these limits \dec{D47}. Their energy $\frac12\mo N M_s^2$ per unit volume acts as a
+\emph{shape anisotropy}. A film magnetised out of plane pays $\frac12\mo M_s^2$, so its effective anisotropy is
+$K_\mathrm{eff} = K - \frac12\mo M_s^2$, and it only stays perpendicular if that is positive. Any body that is not an
+ellipsoid, a cube included, has a non-uniform field that is strongest at its edges and corners, which matters below.
+
+\subsection{Length scales}
+Setting two energy densities equal gives the lengths that control a simulation. Exchange balances magnetostatics, $A/l^2
+= \frac12\mo M_s^2$, at the exchange length $l_\mathrm{ex}$. Exchange balances anisotropy at the wall parameter
+$\delta_0$. Their ratio squared is the quality factor (paper \S1.3):
+\[
+  l_\mathrm{ex} = \sqrt{\frac{2A}{\mo M_s^2}}, \qquad \delta_0 = \sqrt{\frac{A}{K}}, \qquad
+  Q = \frac{2K}{\mo M_s^2} = \left(\frac{l_\mathrm{ex}}{\delta_0}\right)^2.
+\]
+With $Q\ll 1$ a material is soft: demag decides the pattern, and walls and vortices are set by $l_\mathrm{ex}$. With
+$Q>1$ it is hard: anisotropy can hold $\vm$ against the worst possible demagnetising field, so a magnet of any shape is
+possible, and $\delta_0$ is the shortest length. The paper's hardness parameter is $\kappa = K/(\mo M_s^2) = Q/2$, and
+useful hard phases have $\kappa > 1$.
+
+\begin{table}[h]
+\centering\small
+\caption{Derived quantities for the two benchmark materials: permalloy as in $\mu$MAG SP2 and SP4, and
+Nd$_2$Fe$_{14}$B as in the 40\,nm cube.}
+\label{tab:scales}
+\begin{tabular}{@{}l l r r@{}}
+\toprule
+Quantity & Formula & Permalloy & Nd$_2$Fe$_{14}$B \\
+\midrule
+Polarisation & $\mo M_s$ & 1.005 T & 1.61 T \\
+Exchange stiffness & $A$ & 13 pJ/m & 7.7 pJ/m \\
+Anisotropy constant & $K$ & 0 & 4.3 MJ/m$^3$ \\
+Exchange length & $l_\mathrm{ex}$ & 5.69 nm & 2.73 nm \\
+Wall parameter & $\delta_0$ & none & 1.34 nm \\
+Wall width & $\pi\delta_0$ & none & 4.20 nm \\
+Wall energy & $\sigma = 4\sqrt{AK}$ & none & 23.0 mJ/m$^2$ \\
+Quality factor & $Q$ & 0 & 4.17 \\
+Anisotropy field & $\mo H_K = 2K/M_s$ & none & 6.71 T \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Domain walls}
+Take a wall across which $\vm$ turns by $\theta(x)$ from one easy direction to the other, staying in the plane of the
+wall so that $\nabla\cdot\mathbf{M} = 0$ and no charges appear (a Bloch wall). The energy per unit area is $\int
+(A\theta'^2 + K\sin^2\theta)\,dx$. Exchange wants the turn spread out, anisotropy wants it short, and the minimum has
+the two densities equal at every point, $A\theta'^2 = K\sin^2\theta$. Integrating this gives
+\[
+  \theta(x) = 2\arctan e^{x/\delta_0}, \qquad m_z = \cos\theta = -\tanh(x/\delta_0), \qquad
+  \sigma = \int 2K\sin^2\theta\,dx = 4\sqrt{AK}.
+\]
+The profile is in Figure~\ref{fig:physics}(a). The width $\pi\delta_0$ is the distance the turn would take at its
+steepest slope. The tests place this exact profile on the grid and require the torque to vanish and the energy to reach
+$\sigma$ at second order in $\Delta x$ \dec{D13}. It is also why a hard-magnet mesh needs cells of about 1\,nm: a coarser
+wall is pinned between cells, and the coercive field comes out too high.
+
+Walls cost energy, so a magnet only forms them when the demag energy saved is larger. The saving grows with volume and
+the cost with area, so below some size a particle stays in one domain. The textbook estimate for a sphere is a radius of
+$36\sqrt{AK}/(\mo M_s^2)$, about 100\,nm for Nd$_2$Fe$_{14}$B. Keeping grains near or below this size is one reason
+fine-grained magnets have higher coercivity.
+
+\begin{figure}[t]
+\centering
+\pgfplotsset{phys/.style={width=0.315\textwidth,height=4.4cm,axis lines=left,tick align=outside,
+  tick style={color=comment},axis line style={color=comment},every tick label/.style={font=\scriptsize},
+  label style={font=\footnotesize},title style={font=\footnotesize,yshift=-3pt},
+  every axis plot/.append style={line width=1pt}}}
+\begin{tikzpicture}[baseline]
+\begin{axis}[phys,title={(a) Bloch wall},xlabel={$x/\delta_0$},ylabel={component of $\vm$},xmin=-5,xmax=5,ymin=-1.1,ymax=1.1,
+  ytick={-1,0,1},xtick={-4,-2,0,2,4}]
+  \addplot[accent,domain=-5:5,samples=81,mark=none] {-tanh(x)};
+  \addplot[comment,dashed,domain=-5:5,samples=81,mark=none] {1/cosh(x)};
+  \node[font=\scriptsize,anchor=south] at (axis cs:-3.2,0.55) {$m_z$};
+  \node[font=\scriptsize,anchor=west] at (axis cs:1.6,0.62) {$m_y$};
+\end{axis}
+\end{tikzpicture}%
+\hfill
+\begin{tikzpicture}[baseline]
+\begin{axis}[phys,title={(b) Macrospin, field against $\vm$},xlabel={angle $\varphi$ from the start ($^\circ$)},
+  ylabel={$(E-E_0)/KV$},xmin=0,xmax=180,ymin=-1.5,ymax=1.45,xtick={0,90,180},ytick={-1,0,1}]
+  \addplot[accent!30,domain=0:180,samples=91,mark=none] {sin(x)^2};
+  \addplot[accent!55,domain=0:180,samples=91,mark=none] {sin(x)^2+0.6*cos(x)-0.6};
+  \addplot[accent!80,domain=0:180,samples=91,mark=none] {sin(x)^2+1.2*cos(x)-1.2};
+  \addplot[accent,domain=0:180,samples=91,mark=none] {sin(x)^2+2*cos(x)-2};
+  \node[font=\scriptsize,anchor=south] at (axis cs:90,1.0) {$h=0$};
+  \node[font=\scriptsize,anchor=west] at (axis cs:100,0.28) {0.3};
+  \node[font=\scriptsize] at (axis cs:64,-0.16) {0.6};
+  \node[font=\scriptsize,anchor=east] at (axis cs:78,-0.95) {1};
+\end{axis}
+\end{tikzpicture}%
+\hfill
+\begin{tikzpicture}[baseline]
+\begin{axis}[phys,title={(c) 40\,nm cube, 300 K},xlabel={$\mo|H|$ (T)},ylabel={$E_B/k_BT$},xmin=3.5,xmax=5.5,ymin=0,ymax=32,
+  xtick={3.5,4,4.5,5,5.5},ytick={0,10,25}]
+  \addplot[comment,dashed,line width=0.6pt,mark=none] coordinates {(3.5,25) (5.5,25)};
+  \addplot[comment,dotted,line width=0.8pt,mark=none] coordinates {(5.275,0) (5.275,32)};
+  \addplot[accent,mark=*,mark size=1.6pt,mark options={solid,fill=accent}] coordinates
+    {(3.7,28.604) (3.94,22.478) (4.2,16.877) (5.2,0.703)};
+  \node[font=\scriptsize,anchor=south] at (axis cs:4.55,25) {25 $k_BT$};
+  \node[font=\scriptsize,anchor=east] at (axis cs:5.26,13) {static};
+\end{axis}
+\end{tikzpicture}
+\caption{(a) The exact wall profile. (b) A macrospin's energy against its angle, with the field along the axis and
+opposing $\vm$, at $h = H/H_K$ of 0, 0.3, 0.6 and 1. The barrier is $(1-h)^2KV$ and is gone at $h=1$. (c) Barriers computed
+by \code{gneb} for the cube, $30^3$ cells, field $1^\circ$ off the axis, against the static switching field of 5.275\,T.}
+\label{fig:physics}
+\end{figure}
+
+\subsection{Coherent rotation: the Stoner--Wohlfarth model}
+In a particle small enough that exchange keeps $\vm$ uniform, one angle $\varphi$ describes the state. With the field at
+an angle $\psi$ to the easy axis, the energy per unit volume is (paper \S2.2.5)
+\[
+  \frac{E}{V} = K\sin^2\varphi - \mo M_s H\cos(\varphi-\psi).
+\]
+At low field there are two minima separated by a maximum (Figure~\ref{fig:physics}b). As an opposing field grows, the
+minimum $\vm$ sits in becomes shallower, until it merges with the maximum and $\vm$ has to jump. Asking where the first
+and second derivatives vanish together gives the switching field, the Stoner--Wohlfarth astroid \cite{stoner}:
+\[
+  \frac{H_\mathrm{sw}(\psi)}{H_K} = \left(\cos^{2/3}\psi + \sin^{2/3}\psi\right)^{-3/2}, \qquad H_K = \frac{2K}{\mo M_s}.
+\]
+It is 1 on the axis, and only $\frac12$ at $45^\circ$, because a tilted field also exerts a torque on $\vm$. It already
+drops to 0.907 at $1^\circ$, which is why a small misalignment matters so much. With the field on the axis the barrier
+is exactly $E_B = KV(1-h)^2$ with $h = H/H_K$; off the axis it falls as $(1-H/H_\mathrm{sw})^{3/2}$ near switching \cite{victora}. The
+minimiser tests use the astroid and the \code{gneb} tests use the barrier.
+
+\textbf{From one grain to a loop.} A hysteresis loop is the sequence of local minima the magnet passes through as the
+field changes (paper \S2.2.1). The remanence $M_r$ is $\langle\vm\rangle$ along the field at $H=0$, and the coercive
+field $H_c$ is the field where it crosses zero. An ensemble of non-interacting Stoner--Wohlfarth grains with random axes
+has $M_r = 0.5\,M_s$ and $H_c = 0.479\,H_K$, a further check \dec{D37}.
+
+\subsection{Why real magnets switch early}
+The cube of Table~\ref{tab:scales} has $\mo H_K = 6.71$\,T, or 6.09\,T at $1^\circ$ off the axis, but it switches at
+5.275\,T, and the 25\,nm core--shell cube at 2.72\,T. Real magnets do worse still. That the ideal coercive field is
+never reached is called Brown's paradox (paper \S1.3). The reason is that reversal does not need every cell to turn
+together. A small reversed \emph{nucleus} forms where it is easiest, at a corner with a strong local demagnetising
+field or in a soft defect, and once its wall can move, it sweeps through the grain. The paper's summary is its eq.~7:
+\[
+  H_c = \alpha_K\,\alpha_\psi\,H_N - N_\mathrm{eff}M_s - H_f.
+\]
+$H_N$ is the ideal nucleation field. $\alpha_\psi$ covers misaligned grains and $\alpha_K$ soft defects, which can reduce
+$H_c$ as far as $H_N/4$. $N_\mathrm{eff}$ covers local demagnetising fields, and $H_f$ thermal activation. The paper's
+60\,nm polycrystal gives $\mo H_N = 6.7$\,T, $\alpha_\psi = 0.71$, $\alpha_K = 0.67$, $N_\mathrm{eff} = 0.2$ and
+$\mo H_f = 0.23$\,T.
+
+A simulation can switch these effects on one at a time, which no experiment can. In micromag, grain axes in \code{[grains]}
+set the misalignment, a \code{boundary} phase or a soft \code{[[region]]} adds defects, \code{demag = false} removes the
+magnetostatics, and a \code{gneb} stage gives the thermal part.
+
+\subsection{Dynamics: precession and damping}
+A magnetic moment carries angular momentum, so a field does not pull it straight round: it exerts a torque, and $\vm$
+precesses like a tilted spinning top, $d\vm/dt = -\gamma_0\,\vm\times\vH_\mathrm{eff}$ with $\gamma_0 = \mo|\gamma|$. The
+frequency is $|\gamma|/2\pi = 28.0$\,GHz per tesla of $\mo H$, or about 190\,GHz (a period near 5\,ps) in the 6.7\,T
+anisotropy field of Nd$_2$Fe$_{14}$B. This motion is always perpendicular to the field, so on its own it conserves
+energy, and a test holds the code to that at $\alpha=0$ \dec{D20}.
+
+Gilbert \cite{gilbert} added a friction term proportional to the velocity:
+\[
+  \frac{d\vm}{dt} = -\gamma_0\,\vm\times\vH_\mathrm{eff} + \alpha\,\vm\times\frac{d\vm}{dt}.
+\]
+Taking $\vm\times$ of this and substituting it back gives the Landau--Lifshitz form of Section~\ref{sec:model}, and that
+is where the $1+\alpha^2$ comes from. For one cell, the energy then falls at the rate
+\[
+  \frac{dE}{dt} = -\mo M_s V\,\alpha\gamma'\,|\vm\times\vH_\mathrm{eff}|^2 \leq 0,
+\]
+so it stops falling exactly when the torque vanishes. Physical damping is small ($\alpha = 0.02$ in SP4), so $\vm$
+spirals in over many turns. With so little friction it can swing past a nearby minimum and end in a different one, which
+is why \code{llg-dynamics} and \code{minimize} may disagree from the same start. For coherent rotation the fastest
+reversal is at $\alpha = 1$. In the limit of large damping only the second term survives, and that term is the direction
+of steepest descent (paper \S2.2.4), which is the link between the LLG equation and the minimiser.
+
+\subsection{Temperature, barriers and rare events}
+At temperature $T$, a magnet in equilibrium visits a state with probability proportional to $e^{-E/k_BT}$. Damping
+alone would drain all the energy, so the thermal field must feed it back at exactly the rate that keeps this
+distribution, and that requirement fixes $\sigma^2$ in Section~\ref{sec:model}: the fluctuation--dissipation theorem. The
+tests check it directly, with an ensemble of macrospins against the Boltzmann distribution, and against the Langevin
+curve $\coth x - 1/x$ with $x = \mo M_s V H/k_BT$ at $K=0$ \dec{D44}.
+
+Crossing a barrier $E_B$ is a rare event, with a waiting time given by the Arrhenius--N\'eel law
+\[
+  \tau = \frac{1}{f_0}\,e^{E_B/k_BT},
+\]
+where the attempt frequency $f_0$ is typically $10^9$ to $10^{11}$\,Hz. A wait of one second then needs $E_B\approx
+25\,k_BT$ (exactly so for $f_0 \approx 7\times10^{10}$\,Hz), the paper's criterion for coercivity at room temperature. The
+exponential makes this sharp: 5 $k_BT$ more or less changes the wait by a factor of about 150, and 40 $k_BT$ means about
+a month. A particle whose whole barrier $KV$ is below 25 $k_BT$ flips by itself and shows no remanence, which is
+superparamagnetism. For Nd$_2$Fe$_{14}$B at 300\,K that is a cube of edge below about 3\,nm.
+
+\textbf{Why barriers need their own method.} The relevant barrier is the lowest pass between two states. A
+\emph{minimum energy path} is one along which the energy gradient is parallel to the path, and its highest point is a
+saddle: a maximum along the path and a minimum across it. A direct thermal run would have to wait for the event, at
+about $10^{15}$ femtosecond steps per second of magnet time, while \code{gneb} goes straight to the saddle.
+
+\textbf{Nucleation sets the barrier, not the volume.} The 40\,nm cube has $KV \approx 66{,}000\,k_BT$, and coherent
+rotation at 3.94\,T would still need about $11{,}000\,k_BT$ \dec{D48}. The computed barrier there is 22.5 $k_BT$
+(Figure~\ref{fig:physics}c), because the saddle is a small reversed nucleus. As a rough estimate, 25 $k_BT$ buys
+only about 4.5\,nm$^2$ of wall at $\sigma = 23$\,mJ/m$^2$, a patch about 2\,nm across. A wire with free ends shows the
+same physics in closed form: a wall entering at the end has a barrier that tends to $4\sqrt{AK}\,S$ at low field, with $S$
+the wire's cross-section, however long the wire is. The \code{gneb} tests compare against that formula \dec{D51}.
+
+Thermal activation lowers the cube's coercive field from 5.275\,T to 3.841\,T, a drop of 27\%. The paper quotes up to
+25\% for nearly ideal particles like this, and only 8\% for its magnet with a soft grain boundary, where defects have
+already taken the easy reversal route.
+
+% ---------------------------------------------------------------------------------------------------------------------
 \section{Implementation choices}
 
 This section explains the numerical choices a user should know about, because they set accuracy, cost and the limits
 of what can be simulated.
 
 \subsection{Grid and data layout}
+\label{sec:layout}
 The grid is a box of $n_x\times n_y\times n_z$ cells of size $\Delta x\times\Delta y\times\Delta z$. Coordinates in the
 card are measured in metres from the lower corner; cell $(i,j,k)$ is centred at
 $((i+\frac12)\Delta x, (j+\frac12)\Delta y, (k+\frac12)\Delta z)$. All arrays are float64 \emph{structure-of-arrays}:
@@ -259,11 +508,11 @@ finely.
 
 \subsection{Energy barriers}
 A \code{gneb} stage finds the minimum energy path between a state and its reverse, by geodesic NEB with a climbing image
-(Bessarab \emph{et al.}\ 2015) \dec{D48}. A chain of images feels the true force across the path and a spring along it;
+(Bessarab \emph{et al.}\ 2015) \cite{bessarab} \dec{D48}. A chain of images feels the true force across the path and a spring along it;
 the highest image climbs to the saddle, so the barrier needs no interpolation. Distances are Ms-weighted rms great-circle
 angles. The first path is a great circle with $10^{-2}$ rad of noise per cell, since a perfectly uniform path can't
 leave itself. L-BFGS moves the whole chain with no line search, as the forces are not the gradient of any energy
-(Ivanov \emph{et al.}\ 2020) \dec{D49}. Each step rotates the cells, and no cell may turn more than 0.1 rad: an rms cap
+(Ivanov \emph{et al.}\ 2020) \cite{ivanov} \dec{D49}. Each step rotates the cells, and no cell may turn more than 0.1 rad: an rms cap
 lets a small nucleus turn as far as it likes. While the path's energy range exceeds 10 barriers, its far end moves in to
 the first image lower than the start, because a pass of 25 $k_BT$ on a slope of $10^5$ $k_BT$ would fit between two
 images.
@@ -569,7 +818,7 @@ micromag never picks the cell size, the step or the tolerances for you. These ru
 \textbf{Cell size.} A cell must be smaller than the shortest length over which $\vm$ turns. Two lengths matter:
 the exchange length $l_\mathrm{ex} = \sqrt{2A/(\mo M_s^2)}$, which sets vortex and flux-closure structures, and the
 wall parameter $\delta_0 = \sqrt{A/K}$ (a Bloch wall is $\pi\delta_0$ wide), which matters in hard magnets. For
-permalloy, $l_\mathrm{ex}\approx 5.7$\,nm; for Nd$_2$Fe$_{14}$B, $l_\mathrm{ex}\approx 2.8$\,nm and
+permalloy, $l_\mathrm{ex}\approx 5.7$\,nm; for Nd$_2$Fe$_{14}$B, $l_\mathrm{ex}\approx 2.7$\,nm and
 $\delta_0\approx 1.3$\,nm. The benchmarks used $0.5\,l_\mathrm{ex}$ for $\mu$MAG SP2, $0.7\,l_\mathrm{ex}$ for SP4, and
 1--1.3\,nm for the Nd$_2$Fe$_{14}$B cubes. In the hard-magnet benchmarks, coarser meshes gave higher coercive fields, so
 \textbf{check any result by refining the mesh once}. Keep cells close to cubic; aspect ratios beyond 1:4 are untested
@@ -589,6 +838,11 @@ field, convergence slows, so leave \code{max\_iter} generous rather than looseni
 \textbf{Hysteresis steps.} Use a coarse \code{mu0\_H\_step} (about 1--5\% of the expected switching field) with a fine
 \code{refine\_to} (about $10^{-3}$\,T for hard magnets, $10^{-5}$\,T for soft films). The coarse step must divide the
 range exactly.
+
+\textbf{Energy barriers.} The 40\,nm cube used 10 images at the default \code{torque\_tol = 1e-4}; check a barrier by doubling
+\code{images} and with a second \code{seed}. Run a long wire at a small field, not zero, where a wall has no single
+saddle. Convergence can depend on the mesh: a $15^3$ cube of 2.67\,nm cells often failed within 2000 iterations where $8^3$, $12^3$ and
+$30^3$ converged \dec{D49}.
 
 \textbf{Thermal step \code{dt} (for \code{heun}).} It must resolve the fastest precession: about 1/20 or less of
 $2\pi/(\gamma_0 H_\mathrm{max})$, where $H_\mathrm{max}$ includes the exchange field, roughly $2A/(\mo M_s\Delta x^2)$
@@ -672,7 +926,7 @@ output folder exits with code 2 before anything is written.
 \section{The Python API}
 
 Everything a card does is available from Python, for scripting parameter studies or custom analysis. Arrays must be
-float64 and C-contiguous in the layout of Section 4.1; a wrong dtype or shape raises an error rather than silently
+float64 and C-contiguous in the layout of Section~\ref{sec:layout}; a wrong dtype or shape raises an error rather than silently
 copying.
 \begin{lstlisting}[language=Python]
 import numpy as np
@@ -739,7 +993,8 @@ OOMMF's 0.60); a cell-size study is open.
   \item The applied field and the temperature are uniform and constant within a stage; $\alpha$ and $\gamma$ are one
         value per stage, not per cell.
   \item At most 256 regions (ids 0--255), which caps a polycrystal at about 255 grains.
-  \item One GPU per run.
+  \item One GPU per run. Thermal runs, periodic boundaries and \code{gneb} have not been run on a GPU yet, and the
+        periodic CUDA code has not been compiled; everything else was verified on a Tesla T4.
   \item Thermal results depend on the cell size, with no renormalisation (Section~\ref{sec:thermal}).
 \end{itemize}
 
@@ -747,7 +1002,7 @@ OOMMF's 0.60); a cell-size study is open.
 \code{docs/thermal.md}, \code{docs/gpu.md}, \code{docs/verification.md}, \code{docs/architecture.md};
 \code{DECISIONS.md} for the reasoning behind every choice, and \code{BENCHMARKS.md} for the reference data and sources.
 
-\begin{thebibliography}{9}\small
+\begin{thebibliography}{99}\small
 \bibitem{fischbacher2018} J.~Fischbacher \emph{et al.}, ``Micromagnetics of rare-earth efficient permanent magnets'',
   \emph{J.\ Phys.\ D: Appl.\ Phys.}\ \textbf{51}, 193002 (2018). \href{https://doi.org/10.1088/1361-6463/aab7d1}{doi:10.1088/1361-6463/aab7d1}
 \bibitem{fischbacher2017} J.~Fischbacher \emph{et al.}, \emph{Appl.\ Phys.\ Lett.}\ \textbf{111}, 072404 (2017).
@@ -757,6 +1012,11 @@ OOMMF's 0.60); a cell-size study is open.
 \bibitem{rackauckas} C.~Rackauckas and Q.~Nie, ``Adaptive methods for stochastic differential equations via natural
   embeddings and rejection sampling with memory'', \emph{Discrete Contin.\ Dyn.\ Syst.\ B} \textbf{22}, 2731 (2017).
 \bibitem{salmon} J.~K.~Salmon \emph{et al.}, ``Parallel random numbers: as easy as 1, 2, 3'', SC'11 (2011).
+\bibitem{bessarab} P.~F.~Bessarab, V.~M.~Uzdin and H.~J\'onsson, \emph{Comput.\ Phys.\ Commun.}\ \textbf{196}, 335 (2015).
+\bibitem{ivanov} A.~V.~Ivanov \emph{et al.}, \emph{J.\ Phys.: Condens.\ Matter} \textbf{32}, 345901 (2020).
+\bibitem{stoner} E.~C.~Stoner and E.~P.~Wohlfarth, \emph{Phil.\ Trans.\ R.\ Soc.\ A} \textbf{240}, 599 (1948).
+\bibitem{victora} R.~H.~Victora, \emph{Phys.\ Rev.\ Lett.}\ \textbf{63}, 457 (1989).
+\bibitem{gilbert} T.~L.~Gilbert, \emph{IEEE Trans.\ Magn.}\ \textbf{40}, 3443 (2004).
 \bibitem{mumag} $\mu$MAG standard problems, \url{https://www.ctcms.nist.gov/~rdm/mumag.org.html}.
 \end{thebibliography}
 

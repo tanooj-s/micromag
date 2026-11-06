@@ -67,7 +67,7 @@ card.toml  provenance.json  stage1_hysteresis.csv  trajectory.h5  trajectory.xdm
 
 ## Documentation
 
-- [User guide (PDF)](docs/guide.pdf): a 12-page introduction for first-time users: the model, the implementation choices, the simulations you can run and every card parameter
+- [User guide (PDF)](docs/guide.pdf): a 16-page introduction for first-time users: the model and its physics, the implementation choices, the simulations you can run and every card parameter
 - [Input cards](docs/cards.md): every section and key, with units and defaults
 - [The results folder](docs/results.md): the CSV columns, the HDF5 layout, provenance
 - [Running on a GPU](docs/gpu.md): CUDA builds, Colab, Slurm
