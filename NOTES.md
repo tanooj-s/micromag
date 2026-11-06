@@ -34,7 +34,7 @@ State at the end of the 2026-10-23 session: everything is committed and pushed.
 - **Iteration 7 on the CPU (2026-10-26):** all checks pass (D44 Result). One finding: the bridge matters for few-cell systems and is invisible on large grids (D44 Correction). One known gap: a wrong bridge mean coefficient (D44 Mutation check).
 - **Iteration 8, periodic boundaries (2026-11-03):** done on the CPU (D45–D47 Results). Next: compile CUDA (Docker) and run `uv run pytest -m "" -v -s` on a GPU, then the D47 GPU Result.
 - **Test counts (2026-11-03, laptop):** `uv run pytest` gives 166 passed, 69 skipped (CUDA), 24 deselected in 76 s; `-m slow` gives 10 passed, 14 skipped in 15 min, every benchmark unchanged.
-- **Iteration 9, energy barriers (2026-11-06):** done on the CPU (D48–D51 Results): the cube's 25 k_BT crossing at 3.841 T against 3.94 T. Open: why the 15³ cube often fails to converge (D49), a preconditioner if a mesh needs one, and whether host work dominates on a GPU (D48).
+- **Iteration 9, energy barriers (2026-11-06):** done on the CPU (D48–D51 Results): the cube's 25 k_BT crossing at 3.841 T against 3.94 T. Open: why the 15³ cube often fails to converge (D49; see the deferred study under open work), and whether host work dominates on a GPU (D48).
 - **Test counts (2026-11-06, laptop):** `uv run pytest` gives 203 passed, 88 skipped, 26 deselected, 1 warning in 90.55s (0:01:30); `-m slow` gives 11 passed, 15 skipped in 27 min.
 - **First thing next session (deferred by the user, 2026-11-03):** one GPU session covers iterations 7, 8 and 9. First the CUDA compile check with Docker (below), since the iteration-8 CUDA changes (exchange wrap, unpadded periodic axes) have never been compiled. Then `uv run pytest -m "" -v -s` on a Colab T4, and the D44, D41, D47 and D51 GPU Results.
 - **Card coverage for runs:** before a run, check the card covers it:
@@ -46,6 +46,17 @@ State at the end of the 2026-10-23 session: everything is committed and pushed.
   1a. **Cell-size dependence of thermal results** (open research question, user, 2026-10-25; D41): smaller cells carry shorter-wavelength fluctuations, so thermal results depend on the mesh. To be addressed during the code's development, e.g. by measuring ⟨m⟩(T) of a film against cell size once iteration 7 works.
   2. **SP2 d/l_ex = 30 cell-size study** (the user's call: a fundamental scaling study to keep, 2026-10-20). Run H_c/Ms at d/l_ex = 30 with nz = 3, 4, 5, 7 cells through the thickness on a GPU; nz = 5 is OOMMF 1.1's 0.60 l_ex, and nz = 6 (0.5 l_ex) gave 0.04533. If nz = 5 lands within 1% of 0.04594, the test should use OOMMF's cell; otherwise the references disagree at this size. A 6d candidate. The script is the `sp2_conv.py` cell below.
   3. **The 6d design** (optional, D40): an original study using the 6b/6c tools.
+  3a. **GNEB convergence study** (deferred by the user for token and time cost, 2026-11-06; D49): why the 15³ cube fails, whether to adapt the L-BFGS history, and whether L-BFGS can be beaten here. Nothing has been run.
+     - **Settled:**
+       - Harness: a separate lab copy under `studies/gneb/`, checked to reproduce `gneb()` iteration for iteration. `gneb.py` stays untouched until a winner is chosen. Scripts committed, raw results in the git-ignored `runs/`.
+       - Adaptive history is adopted only with at least 25% fewer median field evaluations than the best fixed history, paired by seed, with no lower success rate and the same barrier, on held-out cases (the wire and the core–shell cube).
+       - The one alternative to test: an exact-Hessian saddle stage. Converge the chain loosely, then finish the climbing image alone by Newton–Krylov. `effective_field` is linear in m apart from H_ext, so a Hessian-vector product is exact and costs one field evaluation. It also checks for exactly one negative mode.
+     - **Still open:** the compute budget (seeds, meshes, history values). Estimates: about 0.03 s per iteration at 15³ and 0.26 s at 30³ with 10 images, about 8 runs in parallel.
+     - **Test these first:**
+       - The record is weak: 3 seeds at 15³ with no tolerance logged, while 8³ and 12³ used 1e-3 and 1500 iterations. History 15 came from four noisy cases.
+       - Stiffness is an unlikely cause: 30³ is about 4× stiffer and converges, so D49's preconditioner may not be the fix.
+       - Likelier causes: an under-resolved wall (2.67 nm cells, twice δ0) giving a rugged path and a hopping climbing image; truncation repeatedly wiping the history; the stop test needing every image below tolerance when only the saddle sets the barrier; odd n (15 is the only odd mesh tried).
+       - A Krylov solve on a converged path gives a lower bound on what any such method could achieve.
   4. Iteration 10 (stretch, optional): multi-GPU.
 - **Optional recorded runs** (D32 Correction): the full SP2 curve and the 100 nm core–shell cube (`examples/sp2.toml`, `examples/cube_core_shell.toml`), for benchmark data only.
 - **Run a card:** `uv run micromag run examples/sp4.toml -o runs/sp4` (add `--device cuda` on a GPU machine).
