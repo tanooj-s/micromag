@@ -244,6 +244,34 @@ $Q>1$ it is hard: anisotropy can hold $\vm$ against the worst possible demagneti
 possible, and $\delta_0$ is the shortest length. The paper's hardness parameter is $\kappa = K/(\mo M_s^2) = Q/2$, and
 useful hard phases have $\kappa > 1$.
 
+\textbf{One formula for every interaction.} Each term in the energy acts on $\vm$ like a field, and exchange resists that
+field over a characteristic distance. A turn of $\vm$ over a length $l$ costs an exchange energy density of about $A/l^2$,
+and a field $H$ offers about $\frac12\mo M_s H$. Setting them equal gives
+\[
+  l(H) = \sqrt{\frac{2A}{\mo M_s H}}.
+\]
+Put in the field of each interaction and the lengths above come out. Demag's largest field is $H = M_s$, which gives
+$l_\mathrm{ex}$. Anisotropy's field is $H_K = 2K/(\mo M_s)$, which gives $\delta_0$. The applied field gives a third
+length, which matters when the field is strong, as it is in a switching or barrier run. Temperature is the odd one out:
+it is not a field, so compare energies instead. A block of side $l$ is held together by an exchange energy of about $Al$, which
+equals $k_BT$ at $l_T = k_BT/A$. The shortest of the field lengths limits the mesh. $l_T$ sets no such limit: it marks the size at
+which thermal energy rivals the exchange holding a block together, which is one way to see why thermal averages keep changing as
+cells shrink (Section~\ref{sec:thermal}).
+
+\textbf{Worked example: Nd$_2$Fe$_{14}$B.} These numbers are arithmetic on three measured inputs, which are not computed by
+micromag. The review \cite{fischbacher2018} gives $\mo M_s = 1.61$\,T, $K = 4.3$\,MJ/m$^3$ and $A = 7.7$\,pJ/m at room
+temperature. Then:
+\begin{itemize}[nosep]
+  \item $M_s = 1.61\,\mathrm{T}/\mo = 1.281$\,MA/m.
+  \item The demag energy scale is $K_d = \frac12\mo M_s^2 = \frac12(1.61\,\mathrm{T})(1.281\,\mathrm{MA/m}) = 1.031$\,MJ/m$^3$.
+  \item $l_\mathrm{ex} = \sqrt{A/K_d} = \sqrt{7.7\times10^{-12}/1.031\times10^{6}}\,\mathrm{m} = 2.73$\,nm.
+  \item $\delta_0 = \sqrt{A/K} = \sqrt{7.7\times10^{-12}/4.3\times10^{6}}\,\mathrm{m} = 1.34$\,nm, so a wall is $\pi\delta_0 = 4.20$\,nm wide.
+  \item $Q = K/K_d = 4.17$, and $\mo H_K = 2K/M_s = 6.71$\,T.
+  \item At the $\mo H = 3.94$\,T of the barrier study, $l(H) = \sqrt{2A/(M_s\cdot 3.94\,\mathrm{T})} = 1.75$\,nm.
+  \item At 300\,K, $l_T = k_BT/A = 0.54$\,nm.
+\end{itemize}
+Since $Q > 1$, $\delta_0$ is shorter than $l_\mathrm{ex}$, so anisotropy sets the scale here, not demag.
+
 \begin{table}[h]
 \centering\small
 \caption{Derived quantities for the two benchmark materials: permalloy as in $\mu$MAG SP2 and SP4, and
@@ -265,6 +293,45 @@ Anisotropy field & $\mo H_K = 2K/M_s$ & none & 6.71 T \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+Table~\ref{tab:magnets} repeats the arithmetic for three other permanent-magnet phases. Only Nd$_2$Fe$_{14}$B has been simulated
+in micromag; the other columns are reference values for planning a run.
+
+\begin{table}[h]
+\centering\small
+\caption{Length scales of four permanent-magnet phases near room temperature. The first three rows are inputs from the
+literature and the rest are computed from them. Nd$_2$Fe$_{14}$B: \cite{fischbacher2018}. SmCo$_5$: $M_s$ and $K$ from
+\cite{coey2011}, $A$ from \cite{kurichenko}. Sm$_2$Co$_{17}$: \cite{yang2023}. SrFe$_{12}$O$_{19}$: $M_s$ and $K$ from
+\cite{coey2011}, $A$ from \cite{murakami}.}
+\label{tab:magnets}
+\begin{tabular}{@{}l l r r r r@{}}
+\toprule
+Quantity & Formula & Nd$_2$Fe$_{14}$B & SmCo$_5$ & Sm$_2$Co$_{17}$ & SrFe$_{12}$O$_{19}$ \\
+\midrule
+Polarisation & $\mo M_s$ & 1.61 T & 1.08 T & 1.24 T & 0.48 T \\
+Exchange stiffness & $A$ & 7.7 pJ/m & 12 pJ/m & 19.6 pJ/m & 10.7 pJ/m \\
+Anisotropy constant & $K$ & 4.3 MJ/m$^3$ & 17.2 MJ/m$^3$ & 3.9 MJ/m$^3$ & 0.33 MJ/m$^3$ \\
+\midrule
+Demag energy scale & $K_d = \frac12\mo M_s^2$ & 1.03 MJ/m$^3$ & 0.46 MJ/m$^3$ & 0.61 MJ/m$^3$ & 0.09 MJ/m$^3$ \\
+Anisotropy field & $\mo H_K$ & 6.7 T & 40 T & 7.9 T & 1.7 T \\
+Quality factor & $Q = K/K_d$ & 4.2 & 37 & 6.4 & 3.6 \\
+Exchange length & $l_\mathrm{ex}$ & 2.73 nm & 5.08 nm & 5.65 nm & 10.9 nm \\
+Wall parameter & $\delta_0$ & 1.34 nm & 0.84 nm & 2.24 nm & 5.69 nm \\
+Wall width & $\pi\delta_0$ & 4.20 nm & 2.62 nm & 7.04 nm & 17.9 nm \\
+Wall energy & $\sigma = 4\sqrt{AK}$ & 23.0 mJ/m$^2$ & 57.5 mJ/m$^2$ & 35.0 mJ/m$^2$ & 7.5 mJ/m$^2$ \\
+Thermal length, 300 K & $l_T = k_BT/A$ & 0.54 nm & 0.35 nm & 0.21 nm & 0.39 nm \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{How far to trust these inputs.} $M_s$ and $K$ are well measured, but $A$ is hard to measure and the published values
+disagree, and each length goes as $\sqrt{A}$. For SmCo$_5$ the literature gives $A$ from 8.6 pJ/m \cite{yang2023} to 23.6 pJ/m
+\cite{pierobon}, which moves $\delta_0$ from 0.71 to 1.17\,nm. For Sm$_2$Co$_{17}$, $A = 24.7$\,pJ/m and $K = 3.3$\,MJ/m$^3$
+\cite{pierobon} give $\delta_0 = 2.74$\,nm. For the ferrite, an older $A = 6$\,pJ/m \cite{sfofilm} gives $\delta_0 = 4.26$\,nm.
+The ferrite's newer value has a direct check: its $\pi\delta_0 = 17.9$\,nm matches the measured wall width of
+$17.8\pm1.4$\,nm \cite{murakami}. Also, $K = 4.9$\,MJ/m$^3$ is often quoted for Nd$_2$Fe$_{14}$B, and the review uses both
+values. Commercial Sm$_2$Co$_{17}$ is a cell structure with a SmCo$_5$-like boundary phase, so one column does not describe a
+real 2:17 magnet. SmCo$_5$'s $\delta_0$ is only about two unit cells, so a continuum model is near its limit there.
 
 \subsection{Domain walls}
 Take a wall across which $\vm$ turns by $\theta(x)$ from one easy direction to the other, staying in the plane of the
@@ -824,6 +891,49 @@ $\delta_0\approx 1.3$\,nm. The benchmarks used $0.5\,l_\mathrm{ex}$ for $\mu$MAG
 \textbf{check any result by refining the mesh once}. Keep cells close to cubic; aspect ratios beyond 1:4 are untested
 for the demag tensor.
 
+\textbf{How fine depends on what you measure.} No single cell size suits every result (lengths from
+Section~\ref{sec:physics}, Table~\ref{tab:magnets}):
+\begin{itemize}[nosep]
+  \item \emph{Coercive field.} The review's finite-element cubes, spheres and polycrystals changed by less than 2\% between
+        1.3 and 2.7\,nm at the surface \cite{fischbacher2018}, so about $2\delta_0$ can be enough for Nd$_2$Fe$_{14}$B. It asks
+        for cells below $l_\mathrm{ex}$ where the nucleus forms: the transverse demag field diverges at corners and edges.
+  \item \emph{Wall energy and a wall-type barrier.} The wire's barrier error is second order: $-0.35\%$ at $0.28\,\delta_0$ and $-1.4\%$
+        at $0.57\,\delta_0$, about $-4.4\%\times(\Delta x/\delta_0)^2$ \dec{D51}. That gives about $-4\%$ at $\delta_0$, an extrapolation
+        beyond the measured range.
+  \item \emph{A barrier set by a small nucleus.} The most demanding case measured so far. The 40\,nm cube at 3.94\,T extrapolates to about
+        24.1\,$k_BT$ and reads about $-7\%\times(\Delta x/\delta_0)^2$ from $0.75\,\delta_0$ to $1.2\,\delta_0$. At $2\delta_0$ that law
+        breaks down: the barrier is 41\% low and the path turns into a staircase (Section~\ref{sec:coarse}).
+  \item \emph{Thermal averages.} These do not converge as the mesh is refined (Section~\ref{sec:thermal}).
+\end{itemize}
+For a barrier there is a second test besides $\delta_0$: \textbf{the nucleus at the saddle must span several cells}. The cube's
+nucleus is about 17\,nm$^3$ at 3.94\,T on every mesh from $25^3$ to $40^3$. Four reversed cells at $25^3$ were enough for a clean
+single pass; at $15^3$ one cell (19\,nm$^3$) is bigger than the nucleus, and the path broke up. A stronger field should shrink the
+nucleus, as $l(H)$ suggests, so check this at the field you care about.
+
+Table~\ref{tab:mesh} turns this into starting values for each magnet. They are starting values, not guarantees: only the
+Nd$_2$Fe$_{14}$B column has been run, and on a single problem. A $\delta_0$ cell leaves only about three cells across a wall.
+
+\begin{table}[h]
+\centering\small
+\caption{Starting cell sizes from Table~\ref{tab:magnets}. A cell of $\delta_0$ gives an error of about 4\% on the wire and 7\% on the
+cube's barrier; a cell of $\delta_0/2$ gives about 1\% and 2\%. The last row is the cost of a 40\,nm cube at $\delta_0$.}
+\label{tab:mesh}
+\begin{tabular}{@{}l r r r r@{}}
+\toprule
+& Nd$_2$Fe$_{14}$B & SmCo$_5$ & Sm$_2$Co$_{17}$ & SrFe$_{12}$O$_{19}$ \\
+\midrule
+Shortest length & $\delta_0$ & $\delta_0$ & $\delta_0$ & $\delta_0$ \\
+Coarsest cell for walls and barriers, $\delta_0$ & 1.34 nm & 0.84 nm & 2.24 nm & 5.69 nm \\
+Cell for 1--2\%, $\delta_0/2$ & 0.67 nm & 0.42 nm & 1.12 nm & 2.85 nm \\
+Coarsest cell for a nucleation field, $l_\mathrm{ex}$ & 2.73 nm & 5.08 nm & 5.65 nm & 10.9 nm \\
+40\,nm cube at $\delta_0$ & $30^3$ & $48^3$ & $18^3$ & $7^3$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+In a soft material ($Q\ll 1$) the same logic gives $l_\mathrm{ex}$ as the limit. With several materials on one grid, as in a
+core--shell cube, take the shortest length of any phase that $\vm$ turns in.
+
 \textbf{Grid size.} Memory and time are dominated by the demag FFT on a grid padded to $2n$ per free axis. On a laptop CPU,
 $10^4$--$10^5$ cells are practical; $10^6$ cells (e.g.\ a 100\,nm cube at 1\,nm) belong on a GPU.
 
@@ -842,7 +952,7 @@ range exactly.
 \textbf{Energy barriers.} The 40\,nm cube used 10 images at the default \code{torque\_tol = 1e-4}; check a barrier by doubling
 \code{images} and with a second \code{seed}. Run a long wire at a small field, not zero, where a wall has no single
 saddle. Convergence can depend on the mesh: a $15^3$ cube of 2.67\,nm cells often failed within 2000 iterations where $8^3$, $12^3$ and
-$30^3$ converged \dec{D49}.
+$30^3$ converged \dec{D49}. A chain that converges has not proved it found the highest pass (Section~\ref{sec:coarse}).
 
 \textbf{Thermal step \code{dt} (for \code{heun}).} It must resolve the fastest precession: about 1/80 of
 $2\pi(1+\alpha^2)/(\gamma_0 H_\mathrm{max})$, where $H_\mathrm{max}$ includes the exchange field, up to
@@ -851,6 +961,90 @@ $\tau_N = (1+\alpha^2)\mo M_s V/(2\alpha\gamma_0 k_BT)$; the tests use $\tau_N/2
 \code{dt} once. Femtosecond steps are typical.
 
 % ---------------------------------------------------------------------------------------------------------------------
+\subsection{Case study: a barrier on a coarse mesh}
+\label{sec:coarse}
+The same 40\,nm Nd$_2$Fe$_{14}$B cube at $\mo H = -3.94$\,T, 1$^\circ$ off $z$, was run on meshes from $15^3$ (cells of 2.67\,nm, $2\delta_0$) to $40^3$ (1.00\,nm, $0.75\,\delta_0$). From $25^3$ up the chain converged on
+every seed. At $15^3$ it usually did not. The studies are in \code{benchmarks/saddle\_finish.pdf} \dec{D54} and
+\code{benchmarks/barrier\_cell\_size.pdf} \dec{D56}.
+
+\textbf{The tool.} Because the field is linear in $\vm$, the exact curvature of the energy on the spheres costs one field
+evaluation per direction: $A v = -P(L v) + (\vm\cdot\vH)v$, where $L$ is the field without $H_\mathrm{ext}$ and $P$ removes the
+component along $\vm$. So Newton's method can be run on one state, with MINRES solving each step. It finds the nearest point of zero
+force, of any kind. Counting the negative curvatures tells which kind: none is a minimum, one is a saddle, more is not a
+pass. Pushing a saddle both ways along its negative mode and relaxing shows which minima it joins, though about one push in seven
+overshot to the far side. This tool lives in \code{benchmarks/barrier\_cell\_size.py}, not in the \code{gneb} stage. It was tried as
+a way to speed up \code{gneb} and dropped: L-BFGS gets the barrier right, and the saving was too small.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}
+\begin{axis}[width=0.72\textwidth,height=5cm,axis lines=left,tick align=outside,tick style={color=comment},
+  axis line style={color=comment},every tick label/.style={font=\scriptsize},label style={font=\footnotesize},
+  ylabel={energy above start ($k_BT$)},xtick={0,1,2,3,4,5},xticklabels={start,pass,minimum,pass,minimum,pass},
+  xmin=-0.2,xmax=5.6,ymin=-3,ymax=26,legend style={draw=none,font=\footnotesize,at={(0.98,0.98)},anchor=north east},
+  every axis plot/.append style={line width=1pt}]
+\addplot[accent,mark=*,mark size=1.6pt] coordinates {(0,0)(1,22.478)};
+\addlegendentry{$30^3$: one pass}
+\addplot[comment,mark=*,mark size=1.6pt] coordinates {(0,0)(1,14.249)(2,11.107)(3,14.203)(4,5.478)(5,6.770)};
+\addlegendentry{$15^3$: passes and minima in turn}
+\addplot[accent,dashed,-stealth] coordinates {(1,22.478)(1.75,-3)};
+\addplot[comment,dashed,-stealth] coordinates {(5,6.770)(5.5,-3)};
+\end{axis}
+\end{tikzpicture}
+\caption{Stationary points of the cube at 3.94\,T, each joined to the next by a push and relax. Dashed arrows lead on down to the
+reversed state, about 156,000\,$k_BT$ below the start.}
+\label{fig:stairs}
+\end{figure}
+
+\textbf{What it found.} At $30^3$ every finish reached 22.4783\,$k_BT$, the chain's own value to four decimals, with one
+negative mode ($-1.64$\,T, the next $+0.86$\,T), in 18--53 field evaluations after a chain of 3,600--7,700. At $15^3$ the path is a
+staircase (Figure~\ref{fig:stairs}). The first pass at 14.249\,$k_BT$ leads to a minimum at 11.107\,$k_BT$ with one reversed cell,
+then a second pass at 14.203\,$k_BT$. The climbing image has two tops 0.05\,$k_BT$ apart to choose between, and chains that did
+converge often stopped on the lower one. The likely cause is that a nucleus smaller than one cell cannot grow smoothly, so
+reversal proceeds cell by cell.
+
+\textbf{Refining the mesh.} From $25^3$ to $40^3$ all 12 chains converged, seeds agreed to four decimals, and Newton from all 96 images
+found one pass or the start, so the staircase is gone by $1.2\,\delta_0$. The odd meshes $25^3$ and $35^3$ behave like the even ones, so
+odd $n$ is not the cause. Iterations stayed at 540--1020 with no trend, so the mesh does not slow L-BFGS.
+\begin{center}\small
+\begin{tabular}{@{}l r r r r r r@{}}
+\toprule
+Mesh & Cell (nm) & Cell$/\delta_0$ & Converged & Barrier ($k_BT$) & Against 24.1 & Nucleus \\
+\midrule
+$15^3$ & 2.67 & 1.99 & 0 of 3 & 14.249 & $-41\%$ & under 1 cell \\
+$25^3$ & 1.60 & 1.20 & 3 of 3 & 21.695 & $-10\%$ & 4 cells, 16.4\,nm$^3$ \\
+$30^3$ & 1.33 & 1.00 & 3 of 3 & 22.478 & $-7\%$ & 7 cells, 16.6\,nm$^3$ \\
+$35^3$ & 1.14 & 0.85 & 3 of 3 & 22.891 & $-5\%$ & 11 cells, 16.4\,nm$^3$ \\
+$40^3$ & 1.00 & 0.75 & 3 of 3 & 23.158 & $-4\%$ & 17 cells, 17.0\,nm$^3$ \\
+\bottomrule
+\end{tabular}
+\end{center}
+The barrier rises as $E_0 - c\,\Delta x^2$, with $E_0 = 24.0$--24.1\,$k_BT$ depending on which meshes are fitted. That is an
+extrapolation below the finest cell run. It would move our 25\,$k_BT$ crossing from 3.84\,T to about 3.91\,T, close to the published
+3.94\,T (an estimate, using the slope measured at $30^3$). Meshes between $15^3$ and $25^3$ were not run, so the exact point where the
+staircase starts is unknown, and why $8^3$ and $12^3$ converged is unexplained.
+
+\textbf{The starting path is not the cause.} Three other first paths gave the same picture at $15^3$, with 3 seeds and 2000 iterations
+each:
+\begin{center}\small
+\begin{tabular}{@{}l c c l@{}}
+\toprule
+First path & Converged at $10^{-4}$ & Converged at $10^{-2}$ & Barrier when converged ($k_BT$) \\
+\midrule
+Great circle (the default) & 0 of 3 & 1 of 3 & 14.2025 \\
+The $30^3$ path, coarsened & 0 of 3 & 1 of 3 & 14.2492 \\
+A corner nucleus, grown along the path & 0 of 3 & 0 of 3 & none \\
+An LLG reversal at $-7$\,T & 0 of 3 & 2 of 3 & 14.2025, 14.2025 \\
+\bottomrule
+\end{tabular}
+\end{center}
+The great-circle start converges at $30^3$, and Newton found the same points from every start, so they belong to the discrete
+landscape. A shift of 0.005\,$k_BT$ in the start state was enough to change which chains converged.
+
+\textbf{What to take from it.} Non-convergence is the visible symptom, but the larger error is silent: a chain that converges at $15^3$
+reports a barrier about 41\% low, and even a clean $30^3$ run reads 7\% low. Keep cells at or below $\delta_0$, make sure the nucleus spans
+several cells, and compare at least two meshes before quoting a barrier.
+
 \section{Thermal runs: what to expect}
 \label{sec:thermal}
 
@@ -984,7 +1178,8 @@ Periodic perpendicular film: switching at $30^\circ$ & $-0.79446$ T & SW with $H
 \end{center}
 
 The SP2 case at $d/l_\mathrm{ex}=30$ is a known miss, probably due to the mesh ($0.5\,l_\mathrm{ex}$ cells against
-OOMMF's 0.60); a cell-size study is open.
+OOMMF's 0.60); a cell-size study is open. Most of the $-2.5\%$ on the 25 $k_BT$ crossing looks like mesh error at $30^3$
+(Section~\ref{sec:coarse}).
 
 \textbf{Limits to keep in mind.}
 \begin{itemize}
@@ -996,6 +1191,8 @@ OOMMF's 0.60); a cell-size study is open.
   \item One GPU per run. Thermal runs, periodic boundaries and \code{gneb} have not been run on a GPU yet, and the
         periodic CUDA code has not been compiled; everything else was verified on a Tesla T4.
   \item Thermal results depend on the cell size, with no renormalisation (Section~\ref{sec:thermal}).
+  \item A barrier depends strongly on the mesh when the saddle is a small nucleus, and a converged chain may stop on a pass
+        that is not the highest (Section~\ref{sec:coarse}).
 \end{itemize}
 
 \textbf{Further reading in the repository.} \code{docs/cards.md} (card keys), \code{docs/results.md} (outputs),
@@ -1017,6 +1214,13 @@ OOMMF's 0.60); a cell-size study is open.
 \bibitem{stoner} E.~C.~Stoner and E.~P.~Wohlfarth, \emph{Phil.\ Trans.\ R.\ Soc.\ A} \textbf{240}, 599 (1948).
 \bibitem{victora} R.~H.~Victora, \emph{Phys.\ Rev.\ Lett.}\ \textbf{63}, 457 (1989).
 \bibitem{gilbert} T.~L.~Gilbert, \emph{IEEE Trans.\ Magn.}\ \textbf{40}, 3443 (2004).
+\bibitem{coey2011} J.~M.~D.~Coey, ``Critical materials for magnetism'', JST workshop slides (2011), \url{https://www.jst.go.jp/inter/sicp/download/eu/ws2011_eu/presentation/presentation_02.pdf}.
+\bibitem{kurichenko} V.~L.~Kurichenko, D.~Yu.~Karpenkov and P.~A.~Gostischev, \href{https://arxiv.org/abs/2007.02179}{arXiv:2007.02179}.
+\bibitem{yang2023} Y.~Yang \emph{et al.}, ``Micromagnetics and multiscale hysteresis simulations of permanent magnets'',
+  \href{https://doi.org/10.1108/COMPEL-12-2022-0424}{doi:10.1108/COMPEL-12-2022-0424}, \href{https://arxiv.org/abs/2304.05343}{arXiv:2304.05343}.
+\bibitem{pierobon} L.~Pierobon \emph{et al.}, ``Unconventional magnetization textures and domain-wall pinning in Sm-Co magnets'', \href{https://arxiv.org/abs/1901.01922}{arXiv:1901.01922}.
+\bibitem{murakami} Y.~O.~Murakami \emph{et al.}, \emph{Phys.\ Rev.\ Materials} \textbf{10}, 034414 (2026). \href{https://doi.org/10.1103/wt54-nm7b}{doi:10.1103/wt54-nm7b}
+\bibitem{sfofilm} ``Influence of the growth conditions on the magnetism of SrFe$_{12}$O$_{19}$ thin films and the behavior of Co/SrFe$_{12}$O$_{19}$ bilayers'', \href{https://arxiv.org/abs/2002.08259}{arXiv:2002.08259}.
 \bibitem{mumag} $\mu$MAG standard problems, \url{https://www.ctcms.nist.gov/~rdm/mumag.org.html}.
 \end{thebibliography}
 

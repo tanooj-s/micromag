@@ -854,6 +854,7 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
 
   Longer memory may hurt because older pairs describe a landscape the path has left (a guess). Memory is not the limit: 0.35 GB at history 15 for 30³ cells and 20 images, about double while in use (estimate).
 - **Known limit:** the 15³ cube at 3.94 T, a coarser mesh than the target, converged within 2000 iterations for only 1 of 3 seeds at history 15 (0 at 10, 2 at 30), and we don't know why. A preconditioner for the exchange term is the next thing to try if a mesh needs it.
+- **Correction (2026-11-07, measured; D54):** the 15³ failure comes with a rugged landscape, not with stiffness. Near the start the path crosses a pass at 14.249 k_BT, a one-cell minimum at 11.107, a second pass at 14.203, then a minimum at 5.478, so the climbing image has two tops 0.047 k_BT apart. At 1e-2 seed 2 even converged on the lower one. The 30³ mesh shows one saddle. A preconditioner would not address this.
 
 ### D50: The `gneb` stage, outputs and convergence (refines D27, D28) (2026-11-05)
 - **Context:** cards must express a barrier calculation (D27), and the results folder must hold it (D28).
@@ -917,3 +918,46 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
 - **Decision:** `benchmarks/` holds `BENCHMARKS.md` and, per study, `<study>.py`, `<study>.csv` and a one-page `<study>.pdf`. Every new feature with a scaling or benchmark test leaves such a PDF. The script runs the study if the CSV is absent, and always draws the PDF.
 - **Alternatives:** PDFs through LaTeX (`pdflatex` is on the laptop, but matplotlib is already a dependency and draws the plot and table alone); raw results in the ignored `runs/` (the PDF could then not be redrawn from a clone); retroactive PDFs for older benchmarks (not asked for).
 - **Consequence:** the rule is in CLAUDE.md. The PDF is a generated file kept in git, like `docs/guide.pdf`. Older entries in this log keep the name `BENCHMARKS.md`.
+
+### D54: A Newton finish for GNEB: scope, adoption bar and pilot (refines D49) (2026-11-07)
+- **Context:** `effective_field` is linear in m apart from H_ext, so the exact Hessian on the spheres is A v = −P(L v) + (m·H) v, at one field evaluation per product. NOTES listed an exact-Hessian saddle stage as the one alternative to test against L-BFGS.
+- **Decision (user, 2026-11-06):**
+  - An addition: L-BFGS keeps moving the chain, and Newton–MINRES finishes the climbing image alone. Adaptive history and the other 15³ hypotheses are parked.
+  - A pilot before any design, with `gneb.py` unchanged and no lab copy. scipy comes through `uv run --with scipy` and is not a project dependency.
+  - Adoption bar, fixed before the data: exactly one negative mode and a barrier within 0.01 k_BT of L-BFGS wherever both converge; and either every seed of the 15³ case converges, or median field evaluations at 30³ fall by at least 25%, paired by seed, without being worse on the other measure. The final verdict comes from the held-out wire and core–shell cube.
+- **Alternatives:** minimum-mode following (more forgiving from a poor start, but first order); an exchange preconditioner (D49's suggestion; the Correction there argues against it); Newton on the whole chain (GNEB forces are not a gradient, so there is no Hessian).
+- **Consequence:** one negative mode proves a saddle, not the saddle that joins the start. The pilot adds a push-and-relax test along the negative mode for this.
+- **Result (2026-11-07, laptop CPU):** `benchmarks/saddle_finish.pdf`. The cube at −3.94 T, 10 images, target torque 1e-4.
+  - Operator: central differences to 7e-11 on a random state; a macrospin's closed form at the pole and equator, exact.
+  - 30³, 2 seeds, chain tolerances 1e-2, 3e-3, 1e-3: all six finishes reach 22.4783 k_BT, the baseline's value to four decimals, with one negative mode (−1.644 T, next +0.855 T) in 18–53 evaluations. The Lanczos check adds 117–172. The pass has 7 reversed cells. Five of the six pushes land on start and end; the other (seed 0, 1e-3) landed on the end twice at the same saddle, so a 0.1 rad kick can overshoot.
+  - Cost at 30³ against the chain alone: −9%, −10%, +36% (seed 0) and −21%, −18%, −17% (seed 1) at 1e-2, 3e-3, 1e-3. Below the 25% bar.
+  - Early stop along the baseline chain, a try every 25 iterations: every try lands on the pass from 3800 of 5798 evaluations (seed 0) and 3000 of 4838 (seed 1), which would save 30% and 32%. That needs the moment known in advance. Earlier tries land on 44.96 and 89.99 k_BT with two and at least three negative modes, 2.00× and 4.00× the pass, which suggests nuclei at two and four corners (not imaged), and the mode check rejects them. A simple rule tried on those numbers after the fact (try every 100 iterations once the top torque is below 1) gives −19% and −27%.
+  - 15³, 3 seeds: only seed 2 converges at all, and only at 1e-2 and 3e-3. No chain reaches 1e-3 in 2000 iterations. Newton from the final top image stalls on seeds 0 and 1 and falls to the 11.107 minimum on seed 2. Along the chains, 17, 4 and 11 of 80 tries reach 14.2492 k_BT, and 29, 12 and 30 reach some saddle.
+  - Verdict on the bar: correctness passes at 30³. Neither improvement passes as tested. The held-out cases were not run.
+  - First path at 15³ (user's hypothesis that the start explains the 15³ failure; 2026-11-07): 3 seeds, 2000 iterations, the true 15³ start and end kept. Converged at 1e-4 and 1e-2: great circle 0 and 1 of 3; the 30³ path coarsened 2×2×2, 0 and 1; a corner nucleus grown along the path, 0 and 0; an LLG reversal at −7 T, α = 1, 0 and 2. The coarsened path with no noise also failed at both. The great-circle start converges at 30³ on both seeds at every tolerance. Newton found the same 14.2492, 14.2025 and 11.107 points from these starts, so they belong to the landscape. The start does not explain the failure, though 15³'s own solved path was not tried. Of the four converged chains, three stopped on the lower 14.2025 pass. A first run kept the coarsened 30³ start state, 0.005 k_BT off the 15³ minimum, and converged 3 of 6 chains (in 250–351 iterations on two seeds); with the true start, 1 of 6 converged, so outcomes here are that sensitive.
+  - `uv run pytest` not rerun: no package or test file changed.
+- **Correction (2026-11-07; user):** the Newton finish is dropped, in any role. L-BFGS gets the 30³ barrier right, so there is no measured need for a second method, and the finish's one clear use, catching a stop on the lower pass, has appeared only at 15³, where comparing two meshes covers it. `gneb.py` stays as it was. The study stays in `benchmarks/` as the record, and the user may try other methods separately.
+
+### D55: Length scales and starting mesh sizes in the guide (2026-11-07)
+- **Context:** the user asked for the guide to derive each interaction's length scale, tabulate them for other permanent magnets, and give the effect on mesh size.
+- **Decision:**
+  - One formula, l(H) = √(2A/(µ0 Ms H)), gives l_ex at H = Ms, δ0 at H = H_K, and an applied-field length. The thermal length k_BT/A is listed but sets no mesh limit.
+  - New columns: SmCo₅, Sm₂Co₁₇ and SrFe₁₂O₁₉, chosen for covering rare-earth, high-temperature and ferrite magnets. Inputs: Coey's 2011 slides for Ms and K of SmCo₅ and the ferrite; Kurichenko et al. for SmCo₅'s A; Yang et al. for Sm₂Co₁₇; Murakami et al. 2026 for the ferrite's A, the one value with a direct check (πδ0 = 17.9 nm against 17.8 ± 1.4 nm measured).
+  - Mesh guidance depends on the quantity: the review's < 2% coercive-field change up to 2.7 nm, the wire's −4.4% × (Δx/δ0)², the cube's 37% between 2δ0 and δ0, and thermal averages that do not converge.
+- **Alternatives:** one rule for all quantities (the data disagree); BaFe₁₂O₁₉ in place of SrFe₁₂O₁₉ (nearly the same numbers, and the measured A is for the Sr phase); AlNiCo (shape anisotropy, so K and δ0 don't describe it).
+- **Consequence:** published A values spread widely (SmCo₅ 8.6–23.6 pJ/m), so the guide states ranges. Table 5's values are starting points: only the Nd₂Fe₁₄B column has been run, and the proposed cell-size study may change them.
+
+### D56: Barrier against cell size (refines D49, D51, D54) (2026-11-07)
+- **Context:** 15³ fails and gives a much lower barrier than 30³, and D55's mesh table rested on a wire and two meshes. The proposal was n = 12–40; the user chose four points from 25 to 40 (2026-11-07), since 15³ is known to fail.
+- **Decision:** n = 25, 30, 35, 40 (1.2 to 0.75 δ0), 3 seeds, −3.94 T, 10 images, torque 1e-4, limit 2000 iterations, then Newton from every inner image. `benchmarks/barrier_cell_size.py` holds the Hessian operator, the mode count and the push test, and `benchmarks/saddle_finish.py` is removed at the user's request; its PDF and CSVs stay as the record.
+- **Alternatives:** n = 12, 15, 16, 20, 24 as well (would locate the staircase's onset and explain 8³ and 12³; not asked for).
+- **Consequence:** D53's rule of a committed script per PDF no longer holds for `saddle_finish.pdf`. Its footer says so.
+- **Result (2026-11-07, laptop CPU):** `benchmarks/barrier_cell_size.pdf`.
+  - All 12 chains converged in 544–1018 iterations, with no trend in n. Seeds agree to four decimals: 21.6949, 22.4783, 22.8910, 23.1582 k_BT at 25³, 30³, 35³, 40³. Odd n is not the cause of the 15³ failure.
+  - All 96 Newton starts converged: 86 on the one saddle, 10 on the start. No staircase at these meshes.
+  - E = E0 + c a²: E0 = 24.12 k_BT through all four, 24.03 through the finest three (c = −0.94 k_BT/nm² through all four). That is about −7% × (a/δ0)², against −4.4% × (a/δ0)² on the wire. 15³ lies below the fit, at −41%.
+  - The nucleus: 4, 7, 11, 17 reversed cells, 16.4, 16.6, 16.4, 17.0 nm³. One 15³ cell is 19 nm³.
+  - At E0 ≈ 24.1 k_BT and the −25.5 k_BT/T slope measured at 30³ between 3.7 and 3.94 T, the 25 k_BT crossing moves from 3.841 T to about 3.91 T (estimate).
+  - Pushes of 0.03 rad reached start and end on 74 of 86 saddles, and both reached the end on the others, so a smaller kick did not cure D54's overshoot. The cause is not known.
+  - Not explained: why 8³ and 12³ converged (D49). Not measured: 16–24, any other field, any other material.
+

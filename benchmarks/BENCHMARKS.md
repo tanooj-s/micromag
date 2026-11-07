@@ -97,3 +97,21 @@ There is no published value for this film, so the reference is the analytic spin
 | 4 | 0.00166 | 0.00500 | 0.01525 | 0.00496 |
 | 2 | 0.00659 | 0.02012 | 0.06405 | 0.01961 |
 | 1 | 0.01843 | 0.05753 | 0.20355 | 0.05432 |
+
+### Newton finish for GNEB: pilot
+Not a published comparison: an internal test of a second-order saddle finish against our own L-BFGS chain (D54). Plot and table: `saddle_finish.pdf`. Raw data: `saddle_finish.csv` (one row per run), `_points.csv` (Newton from every image), `_early.csv` (tries along the chain), `_trace.csv` (the chain's top image).
+
+**Ours (laptop CPU, 2026-11-07), the D32 cube at −3.94 T, 1° off z:** at 30³, 22.4783 k_BT from every finish, one negative mode, 18–53 field evaluations after the chain. At 15³, the highest pass is 14.2492 k_BT, with a second pass at 14.2025 and a minimum at 11.1069 between them.
+
+### 40 nm cube: GNEB barrier against cell size
+The published criterion is 25 k_BT at µ0H = 3.94 T (Fischbacher et al., APL 111, 072404, finite elements at 1.5 nm). Conditions in D56. Plot and table: [barrier_cell_size.pdf](barrier_cell_size.pdf).
+
+| Mesh | Cell (nm) | Cell/δ₀ | Barrier at −3.94 T (k_BT) | Reversed cells at the saddle |
+|---|---|---|---|---|
+| 25³ | 1.600 | 1.20 | 21.6949 | 4 |
+| 30³ | 1.333 | 1.00 | 22.4783 | 7 |
+| 35³ | 1.143 | 0.85 | 22.8910 | 11 |
+| 40³ | 1.000 | 0.75 | 23.1582 | 17 |
+
+**Ours (laptop CPU, 2026-11-07):** a fit in a² extrapolates to 24.0–24.1 k_BT, which would put the 25 k_BT crossing near 3.91 T (estimate).
+
