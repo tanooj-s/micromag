@@ -53,6 +53,7 @@ results folder: card.toml, provenance.json, stage<k>_<type>.csv, trajectory.{h5,
 | `examples/` | input cards |
 | `hpc/` | Slurm job scripts |
 | `docs/` | these pages, and `make_figures.py` for the README figure |
+| `benchmarks/` | `BENCHMARKS.md`, and one script, data file and one-page PDF per study (D53) |
 
 ## Python API
 
@@ -87,5 +88,5 @@ hot.run_until(m, 2e-9)
 |---|---|
 | [NOTES.md](../NOTES.md) | the roadmap, status, open work |
 | [DECISIONS.md](../DECISIONS.md) | the decision log D1…: context, decision, alternatives, consequence, plus results and corrections |
-| [BENCHMARKS.md](../BENCHMARKS.md) | published reference values and our comparisons |
+| [benchmarks/BENCHMARKS.md](../benchmarks/BENCHMARKS.md) | published reference values and our comparisons |
 | [CLAUDE.md](../CLAUDE.md) | the working rules and commands for development |

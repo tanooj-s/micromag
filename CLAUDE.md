@@ -4,7 +4,7 @@ This is a from-scratch finite-difference micromagnetic solver, modelled on the m
 
 - **Physics spec:** Fischbacher et al. 2018, J. Phys. D 51 193002, https://doi.org/10.1088/1361-6463/aab7d1 (open access). A local copy, kept out of git, is at `refs/Fischbacher_2018_J._Phys._D__Appl._Phys._51_193002.pdf`.
 - **Roadmap, status and open work:** `NOTES.md`. Read it at the start of each session.
-- **Decision log:** `DECISIONS.md` (D1…, in order; find one with `grep -n "### D32" DECISIONS.md`). **Published comparisons:** `BENCHMARKS.md`.
+- **Decision log:** `DECISIONS.md` (D1…, in order; find one with `grep -n "### D32" DECISIONS.md`). **Published comparisons:** `benchmarks/BENCHMARKS.md`.
 
 ## Working with the user
 - This is a teaching project, and the user is the learner, so explain the *why* in plain language.
@@ -22,7 +22,7 @@ Iterations 1–4 followed these steps, and the user expects them each time:
 4. Write the tests, then run them against stub implementations. Every test must go **red** for a real reason. A test that passes on an all-zero or do-nothing stub needs a guard (e.g. `assert norm(expected) > 0`).
 5. Implement until green.
 6. Run a **mutation check**: plant 3–4 realistic bugs one at a time, record which tests catch each, and restore the source. Keep backups in the scratchpad. Do not rebuild while another `uv run` is still using the extension.
-7. Record measured numbers: **Result** lines under the decision in DECISIONS.md, and published comparisons in BENCHMARKS.md. Mark the roadmap row ✓ in NOTES.md.
+7. Record measured numbers: **Result** lines under the decision in DECISIONS.md, published comparisons in `benchmarks/BENCHMARKS.md`, and the benchmark PDF (hard rule below). Mark the roadmap row ✓ in NOTES.md.
 8. Show the test output, give the walkthrough, and ask before committing the code. After the commit, push to `origin main`.
 
 ## Stack
@@ -47,6 +47,7 @@ The build uses uv with scikit-build-core and nanobind. `uv run` rebuilds the C++
   ```
 - **Test (cluster, GPU):** `sbatch hpc/test.sbatch`. The log goes to `micromag-test-<jobid>.out`.
 - **README figure:** `uv run --group docs python docs/make_figures.py` (about a minute) regenerates `docs/img/hero-{light,dark}.png`.
+- **Benchmark PDF:** `uv run --group docs python benchmarks/<study>.py` draws `<study>.pdf` from `<study>.csv`, and runs the study first if the CSV is absent.
 
 ## Conventions
 - SI units throughout: A/m, J/m³, J/m, T.
@@ -62,4 +63,5 @@ The build uses uv with scikit-build-core and nanobind. `uv run` rebuilds the C++
 - When you make a non-obvious decision, add an entry to the decision log in DECISIONS.md (context / decision / alternatives / consequence) in the same change.
 - Do not add an abstraction until there is a second implementation that needs it.
 - Every non-trivial numerical routine needs a test against an analytic result or an independent oracle.
+- Every new feature with a scaling or benchmark test leaves a one-page `benchmarks/<study>.pdf` with the relevant plot and data table, drawn by a committed `benchmarks/<study>.py` (D53).
 - When a card key, an output file or a command changes, update the matching `docs/` page (and the README if it shows it) in the same change.

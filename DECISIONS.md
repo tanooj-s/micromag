@@ -1,6 +1,6 @@
 # DECISIONS
 
-The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and published comparisons in `BENCHMARKS.md`.
+The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and published comparisons in `benchmarks/BENCHMARKS.md`.
 
 <!-- Format, one entry per decision:
 ### D<n>: <title> (<date>)
@@ -618,6 +618,7 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
   - CLAUDE.md names the right file for each kind of entry.
 - **Alternatives:** one file per decision (37 files): loses the chronological read, and every new or corrected entry touches more files. A `docs/` folder: one more level for three files.
 - **Consequence:** the session-start read is about 100 lines. Decisions are found with `grep -n "### D32" DECISIONS.md`.
+- **Correction (2026-11-06; user):** `BENCHMARKS.md` moved to `benchmarks/BENCHMARKS.md` (D53). Older entries here keep the old name.
 - **Correction (2026-11-06; user):** NOTES.md was condensed. It keeps a short check per roadmap row, current state only, and no settled-design summaries, since the decisions hold them.
 
 ### D39: Documentation, license and CI (2026-10-20)
@@ -701,6 +702,7 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
   - Docs: a "Thermal runs" section in `docs/cards.md` (keys, the dt rule of thumb, the caveats in short), and a new `docs/thermal.md` with the physics in plain terms and the caveats in full (cell size, double counting, no per-cell T); `docs/verification.md` and `docs/architecture.md` updated; a README pointer.
 - **Alternatives:** an automatic dt (hides a key numerical choice, and the largest field changes during reversal); an optional seed with a default; a temperature column in the CSV (repeats a constant).
 - **Consequence:** every existing card runs unchanged (T = 0, `rk45`); SP4 must still give 138.6 ps.
+- **Correction (2026-11-06, measured):** the dt rule of thumb was too loose. At 1/20 of the fastest period, Heun's bias on a coupled film is about 2%; `docs/thermal.md` and the guide now say 1/80 and include the (1+α²) (D52 Result).
 
 ### D44: Iteration-7 checks (2026-10-26)
 - **Context:** a thermal code can be wrong without looking wrong: it runs and the needles wiggle, at the wrong temperature or the wrong speed. Random runs never land exactly on a formula, so the checks compare averages against their error bars.
@@ -891,3 +893,27 @@ The decision log (D3, D38). The roadmap and status are in `NOTES.md`, and publis
   - The rms cap back: caught by the small-nucleus test only, as designed.
   - No noise on the first path: caught by the three wire tests and the macrospin at h = 0.
   - Known gap: L-BFGS history not projected onto the current tangent planes. No test catches it, since a step's rotation is capped and the stored vectors stay nearly tangent. It would show as slower convergence, not as a wrong barrier.
+
+### D52: Cell-size dependence of thermal results: a film against its spin-wave sum (refines D41) (2026-11-06)
+- **Context:** D41 left open how much a thermal result depends on the mesh (user, 2026-10-25). A cell is a classical spin with bond strength J = 2Aa, so the mesh sets how soft the lattice is. The harmonic limit is exact: each spin-wave mode stores k_BT/2 per transverse component, which gives 1 − ⟨m⟩ = k_BT/(µ0 Ms V) · mean_k 1/(H_K + (2A/µ0Ms) κ²_k), with κ² the eigenvalues of the 6-neighbour Laplacian.
+- **Decision (user, 2026-11-06):** measure ⟨m⟩(T) of a Nd₂Fe₁₄B film (µ0Ms = 1.61 T, K = 4.30 MJ/m³, A = 7.7 pJ/m), 32×32×8 nm, periodic in x and y, free in z, demag off, H = 0, at cells of 8, 4, 2, 1 nm and T = 100, 300, 600, 900 K. Heun, α = 1, 8 seeds per point. The script and its data are in `benchmarks/`, and `spin_wave_deficit` lives in `tests/test_thermal.py`.
+- **Alternatives:** demag on (no simple oracle; short waves are set by exchange, so it should add a long-wavelength offset, not measured here); permalloy with a 1 T field (the pilot's material); a 0.5 nm cell (leaves the linear regime further, not needed to show the trend).
+- **Consequence:** two new default tests: the mode sum against the trace of the inverse stiffness built from the code's own exchange field (1e-10), and a coupled film against the sum (4σ at 4 nm, 100 K). They are the first thermal checks with exchange on. The study quantifies the mesh dependence and corrects nothing: `docs/thermal.md` keeps its warning, now with numbers.
+- **Correction (2026-11-06, measured):** the design questions said the effect "depends only on A", about 0.126 k_BT/(A a), so that the material would set the numbers but not the conclusion. That is only the limit a ≪ √(A/K). Nd₂Fe₁₄B's √(A/K) is 1.3 nm, so these cells sit in the crossover: the deficit grows by 5.9×, 4.0× and 2.9× per halving, not 2×, and K matters. Far above 1.3 nm each cell is its own macrospin, with deficit k_BT/(2K a³) (0.00094 at 8 nm, 300 K, against 0.00085 measured). The spin-wave sum gives 2.3× at 0.5 nm and 2.04× at 0.125 nm, so 2× is the limit it heads for.
+- **Correction (2026-11-06, measured):** the planned dt of 1/20 of the fastest period was too coarse. See the Result.
+- **Result (2026-11-06, laptop CPU):**
+  - Deficit 1 − ⟨m⟩ at 300 K: 0.00085, 0.00500, 0.02012, 0.05753 at 8, 4, 2, 1 nm, a factor of 68 across the range. ⟨m⟩ falls from 0.99915 to 0.94247. At 900 K: 0.00256 to 0.20355.
+  - Measured/sum at 100 K: 1.001, 1.002, 1.008, 1.018. It grows with the deficit, about 1.0–1.7× the deficit at the three finer meshes, as a next-order term should, and reaches 1.249 at 1 nm, 900 K. A quadratic fit in T gives 1.000, 0.9995, 1.000, 1.005 at T → 0.
+  - dt, at 4 nm, 100 K, measured/sum: 0.982 at 1/20 of the period, 0.997 at 1/40, 1.001 at 1/80 and 1/160. Heun's bias falls about as dt². In the 192-run sweep at 1/80, halving dt moved the deficit by up to 0.5% (13σ at 1 nm, 900 K), so the main run is 1/160. Halving again moves it by at most 0.14% (2.0σ), every point within 4σ. `film_dt` stays at 1/80 for the fast test.
+  - Cost: 192 runs in 16 min at 1/80 and 27 min at 1/160, on 8 cores.
+  - Real Nd₂Fe₁₄B has T_c = 585 K, so 600 and 900 K probe the model only.
+- **Mutation check (2026-11-06):** each bug was planted alone.
+  - Noise variance halved (C++): caught by 8 tests, among them the coupled film.
+  - Exchange wrap dropped at the low-x edge (C++): caught by both new tests and three spin-spiral tests in `test_pbc.py`.
+  - A continuum k² in the sum, and periodic z in the sum: each caught by both new tests.
+
+### D53: A `benchmarks/` folder with a one-page PDF per study (refines D38) (2026-11-06)
+- **Context:** published comparisons lived in a root `BENCHMARKS.md` as text. The user wants each scaling or benchmark result as a plot and table that can be read alone (2026-11-06).
+- **Decision:** `benchmarks/` holds `BENCHMARKS.md` and, per study, `<study>.py`, `<study>.csv` and a one-page `<study>.pdf`. Every new feature with a scaling or benchmark test leaves such a PDF. The script runs the study if the CSV is absent, and always draws the PDF.
+- **Alternatives:** PDFs through LaTeX (`pdflatex` is on the laptop, but matplotlib is already a dependency and draws the plot and table alone); raw results in the ignored `runs/` (the PDF could then not be redrawn from a clone); retroactive PDFs for older benchmarks (not asked for).
+- **Consequence:** the rule is in CLAUDE.md. The PDF is a generated file kept in git, like `docs/guide.pdf`. Older entries in this log keep the name `BENCHMARKS.md`.

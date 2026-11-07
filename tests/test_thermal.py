@@ -279,6 +279,87 @@ def test_escape_rate_matches_fokker_planck(method, device):
     assert abs(got - rate) < 4 * sigma
 
 
+# ---- a coupled film against its spin-wave sum (D52) ----
+
+ND_MS, ND_A, ND_K = 1.61 / mm.mu0, 7.7e-12, 4.3e6  # Nd₂Fe₁₄B (BENCHMARKS.md)
+FILM_L, FILM_T = 32e-9, 8e-9  # periodic in x and y, free top and bottom
+
+
+def spin_wave_deficit(nx, ny, nz, a, Ms, A, H_gap, T):
+    """1 − ⟨m⟩ of cubic cells of edge a, to first order in T: equipartition over the lattice's spin waves.
+
+    Each mode stores k_BT/2 per transverse component, so 1 − ⟨m⟩ = ⟨u²⟩/2 = k_BT/(µ0 Ms V) · mean_k 1/(H_gap + D κ²_k),
+    D = 2A/(µ0 Ms). κ² are the eigenvalues of the 6-neighbour Laplacian: plane waves along periodic x and y, cosines
+    along free z.
+    """
+    per = lambda n: 2 * (1 - np.cos(2 * np.pi * np.arange(n) / n)) / a**2
+    free = 2 * (1 - np.cos(np.pi * np.arange(nz) / nz)) / a**2
+    k2 = free[:, None, None] + per(ny)[None, :, None] + per(nx)[None, None, :]
+    return mm.kB * T / (mm.mu0 * Ms * a**3) * np.mean(1 / (H_gap + 2 * A / (mm.mu0 * Ms) * k2))
+
+
+def film_dt(a, alpha=1.0):
+    """1/80 of the fastest spin wave's period, 2π(1 + α²)/(γ0 (H_K + 12 D / a²)). At 1/20, Heun's bias is 2% (D52 Result)."""
+    H_max = 2 * ND_K / (mm.mu0 * ND_MS) + 12 * 2 * ND_A / (mm.mu0 * ND_MS) / a**2
+    return 2 * np.pi * (1 + alpha**2) / (G0 * H_max) / 80
+
+
+def film_mz(a, T, duration, seed, dt_div=1, device="cpu", burn=20e-12, every=2e-12):
+    """⟨m_z⟩ of the Nd₂Fe₁₄B film (no demag, H = 0), sampled about every `every` after `burn`, from m = +z."""
+    n, nz = round(FILM_L / a), round(FILM_T / a)
+    s = (nz, n, n)
+    one, k = np.ones(s), np.zeros((3, *s))
+    k[2] = 1
+    prob = mm.Problem(mm.Grid(n, n, nz, a, a, a, pbc=(1, 1, 0)), ND_MS * one, ND_A * one, ND_K * one, k, (0, 0, 0),
+                      device=device, demag=False)
+    dt = film_dt(a) / dt_div
+    llg = mm.LLG(prob, 1.0, method="heun", temperature=T, dt=dt, seed=seed)
+    m = np.zeros((3, *s))
+    m[2] = 1
+    step = np.ceil(every / dt) * dt  # a whole number of steps, so no sample cuts a step short
+    t0 = np.ceil(burn / step) * step
+    llg.run_until(m, t0)
+    out = np.empty(round(duration / step))
+    for i in range(out.size):
+        llg.run_until(m, t0 + (i + 1) * step)
+        out[i] = m[2].mean()
+    return out
+
+
+def test_spin_wave_sum_matches_the_codes_own_stiffness():
+    # The exchange field is linear in m, so unit x-kicks cell by cell give its matrix L, and the transverse energy is
+    # ½ uᵀ c u with c = µ0 Ms V (H_gap − L). The trace of c⁻¹ must equal the mode sum, wrapped x and y and free z included.
+    nx, ny, nz, a, H_gap = 4, 3, 2, 2e-9, 2 * ND_K / (mm.mu0 * ND_MS)
+    s = (nz, ny, nx)
+    one = np.ones(s)
+    prob = mm.Problem(mm.Grid(nx, ny, nz, a, a, a, pbc=(1, 1, 0)), ND_MS * one, ND_A * one, 0 * one, np.zeros((3, *s)),
+                      (0, 0, 0), demag=False)
+    N = nx * ny * nz
+    L = np.empty((N, N))
+    H = np.empty((3, *s))
+    for j in range(N):
+        m = np.zeros((3, *s))
+        m[0].flat[j] = 1
+        prob.effective_field(m, H)
+        L[:, j] = H[0].ravel()
+    assert np.abs(L).max() > 0
+    c = mm.mu0 * ND_MS * a**3 * (H_gap * np.eye(N) - L)
+    want = mm.kB * T * np.trace(np.linalg.inv(c)) / N
+    assert abs(spin_wave_deficit(nx, ny, nz, a, ND_MS, ND_A, H_gap, T) / want - 1) < 1e-10
+
+
+def test_coupled_film_matches_its_spin_wave_sum(device):
+    # The ensembles above are uncoupled, so this is the one check of noise and exchange together. At 100 K the
+    # next-order term is below the 4σ tolerance (D52 Result).
+    a, Tf = 4e-9, 100.0
+    mz = film_mz(a, Tf, 8e-9, seed=1, device=device)
+    blocks = 1 - mz[: mz.size // 20 * 20].reshape(20, -1).mean(axis=1)
+    got, sigma = blocks.mean(), blocks.std(ddof=1) / np.sqrt(blocks.size)
+    want = spin_wave_deficit(8, 8, 2, a, ND_MS, ND_A, 2 * ND_K / (mm.mu0 * ND_MS), Tf)
+    assert want > 0 and sigma < 0.02 * want
+    assert abs(got - want) < 4 * sigma, (got, want, sigma)
+
+
 # ---- CPU = CUDA (D26) ----
 
 @pytest.mark.skipif(not mm.has_cuda, reason="CPU-only build")

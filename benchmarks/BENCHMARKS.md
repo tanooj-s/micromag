@@ -87,3 +87,13 @@ Source: https://www.ctcms.nist.gov/~rdm/std2/spec2.html and `results.html` (fetc
 ### Stoner–Wohlfarth ensemble of randomly oriented particles
 - **Stoner & Wohlfarth (1948)**, non-interacting uniaxial particles with isotropic easy axes: remanence M_r = 0.5 M_s and coercivity H_c = 0.479 H_K (H_K = 2K/(µ₀M_s)).
 - **Ours (iteration 6c, CPU):** 255 decoupled Voronoi grains without demag give M_r = 0.4705 M_s and H_c = 0.4627 H_K. Both are within 3σ of the isotropic values for this finite draw of axes, and both agree with the per-axis oracle to 10⁻⁷ (D37).
+
+### Cell-size dependence of thermal magnetisation
+There is no published value for this film, so the reference is the analytic spin-wave sum (D52). Nd₂Fe₁₄B film, 32×32×8 nm, periodic in x and y, no demag, H = 0. Plot and full table: [thermal_cell_size.pdf](thermal_cell_size.pdf).
+
+| a (nm) | 1 − ⟨m⟩ at 100 K | 1 − ⟨m⟩ at 300 K | 1 − ⟨m⟩ at 900 K | spin-wave sum at 300 K |
+|---|---|---|---|---|
+| 8 | 0.00028 | 0.00085 | 0.00256 | 0.00085 |
+| 4 | 0.00166 | 0.00500 | 0.01525 | 0.00496 |
+| 2 | 0.00659 | 0.02012 | 0.06405 | 0.01961 |
+| 1 | 0.01843 | 0.05753 | 0.20355 | 0.05432 |

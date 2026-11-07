@@ -844,9 +844,9 @@ range exactly.
 saddle. Convergence can depend on the mesh: a $15^3$ cube of 2.67\,nm cells often failed within 2000 iterations where $8^3$, $12^3$ and
 $30^3$ converged \dec{D49}.
 
-\textbf{Thermal step \code{dt} (for \code{heun}).} It must resolve the fastest precession: about 1/20 or less of
-$2\pi/(\gamma_0 H_\mathrm{max})$, where $H_\mathrm{max}$ includes the exchange field, roughly $2A/(\mo M_s\Delta x^2)$
-per neighbour. It should also be well below a cell's free-diffusion time
+\textbf{Thermal step \code{dt} (for \code{heun}).} It must resolve the fastest precession: about 1/80 of
+$2\pi(1+\alpha^2)/(\gamma_0 H_\mathrm{max})$, where $H_\mathrm{max}$ includes the exchange field, up to
+$12\cdot 2A/(\mo M_s\Delta x^2)$ on a 3D grid. At 1/20, Heun's bias on a coupled film is about 2\% \dec{D52}. It should also be well below a cell's free-diffusion time
 $\tau_N = (1+\alpha^2)\mo M_s V/(2\alpha\gamma_0 k_BT)$; the tests use $\tau_N/200$. Check a result by halving
 \code{dt} once. Femtosecond steps are typical.
 
@@ -1000,7 +1000,7 @@ OOMMF's 0.60); a cell-size study is open.
 
 \textbf{Further reading in the repository.} \code{docs/cards.md} (card keys), \code{docs/results.md} (outputs),
 \code{docs/thermal.md}, \code{docs/gpu.md}, \code{docs/verification.md}, \code{docs/architecture.md};
-\code{DECISIONS.md} for the reasoning behind every choice, and \code{BENCHMARKS.md} for the reference data and sources.
+\code{DECISIONS.md} for the reasoning behind every choice, and \code{benchmarks/BENCHMARKS.md} for the reference data and sources.
 
 \begin{thebibliography}{99}\small
 \bibitem{fischbacher2018} J.~Fischbacher \emph{et al.}, ``Micromagnetics of rare-earth efficient permanent magnets'',

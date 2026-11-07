@@ -1,7 +1,7 @@
 # NOTES
 
 Roadmap, status and open work: read at the start of each session. Decisions D1… are in `DECISIONS.md`, and published
-comparisons in `BENCHMARKS.md` (D38).
+comparisons in `benchmarks/BENCHMARKS.md` (D38, D53).
 
 ## Roadmap
 Each iteration is done when its check passes and its decisions are logged in `DECISIONS.md`. The full check is in the decision named in each row.
@@ -25,12 +25,12 @@ Each iteration is done when its check passes and its decisions are logged in `DE
 
 ## Resume here
 State on 2026-11-06: iterations 0–9 are done on the CPU, and everything through 6c is verified on a Tesla T4.
-- **Test counts:** `uv run pytest` gives 203 passed, 88 skipped, 26 deselected in 90 s; `-m slow` gives 11 passed, 15 skipped in 27 min (laptop, 2026-11-06). Last GPU run: 139 passed, 1 skipped on a Colab T4 (2026-10-20).
+- **Test counts:** `uv run pytest` gives 205 passed, 89 skipped, 26 deselected in 94 s; `-m slow` gives 11 passed, 15 skipped in 27 min (laptop, 2026-11-06). Last GPU run: 139 passed, 1 skipped on a Colab T4 (2026-10-20).
+- **Thermal cell-size study done (D52):** `benchmarks/thermal_cell_size.pdf`. Demag on and a second material are not measured.
 - **First thing next session (deferred by the user, 2026-11-03):** one GPU session covers iterations 7, 8 and 9. First the CUDA compile check with Docker (`docs/gpu.md`), since the iteration-8 CUDA changes (exchange wrap, unpadded periodic axes) have never been compiled. Then `uv run pytest -m "" -v -s` on a Colab T4 (setup in `docs/gpu.md`; a later `uv run` without `SKBUILD_CMAKE_DEFINE` silently rebuilds without CUDA), and the D44, D41, D47 and D51 GPU Results.
 - **Open work, in rough order:**
-  1. **Cell-size dependence of thermal results** (open research question, user, 2026-10-25; D41): smaller cells carry shorter-wavelength fluctuations, so thermal results depend on the mesh. For example, measure ⟨m⟩(T) of a film against cell size.
-  2. **SP2 d/l_ex = 30 cell-size study** (the user's call: a fundamental scaling study to keep, 2026-10-20). Run H_c/Ms at d/l_ex = 30 with nz = 3, 4, 5, 7 cells through the thickness on a GPU; nz = 5 is OOMMF 1.1's 0.60 l_ex, and nz = 6 (0.5 l_ex) gave 0.04533. If nz = 5 lands within 1% of 0.04594, the test should use OOMMF's cell; otherwise the references disagree at this size. A 6d candidate. The script is below.
-  3. **GNEB convergence study** (deferred by the user for token and time cost, 2026-11-06; D49): why the 15³ cube fails, whether to adapt the L-BFGS history, and whether L-BFGS can be beaten here. Nothing has been run.
+  1. **SP2 d/l_ex = 30 cell-size study** (the user's call: a fundamental scaling study to keep, 2026-10-20). Run H_c/Ms at d/l_ex = 30 with nz = 3, 4, 5, 7 cells through the thickness on a GPU; nz = 5 is OOMMF 1.1's 0.60 l_ex, and nz = 6 (0.5 l_ex) gave 0.04533. If nz = 5 lands within 1% of 0.04594, the test should use OOMMF's cell; otherwise the references disagree at this size. A 6d candidate. The script is below.
+  2. **GNEB convergence study** (deferred by the user for token and time cost, 2026-11-06; D49): why the 15³ cube fails, whether to adapt the L-BFGS history, and whether L-BFGS can be beaten here. Nothing has been run.
      - **Settled:**
        - Harness: a separate lab copy under `studies/gneb/`, checked to reproduce `gneb()` iteration for iteration. `gneb.py` stays untouched until a winner is chosen. Scripts committed, raw results in the git-ignored `runs/`.
        - Adaptive history is adopted only with at least 25% fewer median field evaluations than the best fixed history, paired by seed, with no lower success rate and the same barrier, on held-out cases (the wire and the core–shell cube).
@@ -41,10 +41,10 @@ State on 2026-11-06: iterations 0–9 are done on the CPU, and everything throug
        - Stiffness is an unlikely cause: 30³ is about 4× stiffer and converges, so D49's preconditioner may not be the fix.
        - Likelier causes: an under-resolved wall (2.67 nm cells, twice δ0) giving a rugged path and a hopping climbing image; truncation repeatedly wiping the history; the stop test needing every image below tolerance when only the saddle sets the barrier; odd n (15 is the only odd mesh tried).
        - A Krylov solve on a converged path gives a lower bound on what any such method could achieve.
-  4. **Whether `gneb` host work dominates on a GPU** (D48): measure it in the GPU session.
-  5. **`micromag summarize runs/*`:** one table from each run's `provenance.json`. Suggested, not yet agreed.
-  6. **Known test gaps:** a wrong embedded-error weight in the LLG integrator wastes steps but gives correct results (a step-count bound on the macrospin would catch it; offered in iteration 3, not added); the bridge's conditional mean (D44); L-BFGS history not projected onto the tangent planes (D51).
-  7. **Optional:** the 6d design (D40); multi-GPU (iteration 10); the recorded runs of D32 (the full SP2 curve and the 100 nm core–shell cube, benchmark data only); the cluster build (below).
+  3. **Whether `gneb` host work dominates on a GPU** (D48): measure it in the GPU session.
+  4. **`micromag summarize runs/*`:** one table from each run's `provenance.json`. Suggested, not yet agreed.
+  5. **Known test gaps:** a wrong embedded-error weight in the LLG integrator wastes steps but gives correct results (a step-count bound on the macrospin would catch it; offered in iteration 3, not added); the bridge's conditional mean (D44); L-BFGS history not projected onto the tangent planes (D51).
+  6. **Optional:** the 6d design (D40); multi-GPU (iteration 10); the recorded runs of D32 (the full SP2 curve and the 100 nm core–shell cube, benchmark data only); the cluster build (below).
 - **SP2 cell-size script** (run on Colab after the `docs/gpu.md` setup, `uv run python sp2_conv.py 3 4 5 7`):
   ```python
   import pathlib, sys, tempfile

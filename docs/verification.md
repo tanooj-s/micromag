@@ -1,6 +1,6 @@
 # Verification
 
-Every numerical routine is tested against an analytic result or an independent oracle. The CPU implementation is the oracle for every GPU kernel. Published reference values, with their sources and conditions, are in [BENCHMARKS.md](../BENCHMARKS.md). The decision behind each check is in [DECISIONS.md](../DECISIONS.md).
+Every numerical routine is tested against an analytic result or an independent oracle. The CPU implementation is the oracle for every GPU kernel. Published reference values, with their sources and conditions, are in [benchmarks/BENCHMARKS.md](../benchmarks/BENCHMARKS.md). The decision behind each check is in [DECISIONS.md](../DECISIONS.md).
 
 ## Running the tests
 
@@ -23,7 +23,7 @@ Physics tests take a `device` fixture, so each one runs on `cpu` and, on a CUDA 
 | `test_coercivity.py` | µMAG SP2 and the Nd₂Fe₁₄B cubes |
 | `test_regions.py` | shapes, Voronoi grains, the boundary phase, the coupling table, the Stoner–Wohlfarth ensemble |
 | `test_pbc.py` | periodic boundaries: wrapped exchange exact on a spin spiral; the periodic FFT against a direct sum over each cell's window of copies; the rod (→ ½) and film (→ 1) limits at their convergence orders; the periodic cube (⅓, uniform field); periodic Voronoi against a brute-force oracle; a periodic perpendicular film on the Stoner–Wohlfarth astroid |
-| `test_thermal.py` | Philox against its known-answer vectors; the thermal field's variance and independence; Heun and RK23 orders at T = 0; uncoupled macrospins against the Boltzmann distribution and the Langevin curve, at two damping values; a single macrospin under heavy step rejection and the Brownian bridge; the escape rate against the Fokker–Planck operator (slow); CPU = CUDA |
+| `test_thermal.py` | Philox against its known-answer vectors; the thermal field's variance and independence; Heun and RK23 orders at T = 0; uncoupled macrospins against the Boltzmann distribution and the Langevin curve, at two damping values; a single macrospin under heavy step rejection and the Brownian bridge; the escape rate against the Fokker–Planck operator (slow); the spin-wave sum against the code's own exchange matrix, and a coupled film against that sum; CPU = CUDA |
 | `test_gneb.py` | energy barriers: the macrospin on the axis (exact) and at a tilted field against a 1D scan; a wall entering a free-ended wire against its closed form, at second order; path geometry and tangents; truncation; seeds; the `gneb` stage; the cube's 25 k_BT crossing (slow) |
 
 ## Validation against published results
